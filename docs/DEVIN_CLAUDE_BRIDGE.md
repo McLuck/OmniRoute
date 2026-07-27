@@ -5,13 +5,21 @@ Messages endpoint while the official Devin CLI supplies model responses over ACP
 It does not modify the existing Anthropic, Claude OAuth, Claude Web, or `devin-cli`
 providers.
 
+> **Current status: offline-complete, live-blocked.** Devin CLI `3000.2.17` does not
+> expose a neutral no-tools inference mode over ACP. Its `summarizer` agent has a fixed
+> summarization role and does not reliably follow the tool-envelope protocol; its default
+> agent attempts to execute tools inside Devin. The adapter rejects those internal tool
+> events with `502`, so it is fail-closed but the three required live scenarios do not pass.
+> Do not use `launch` as a working live bridge until the official CLI provides a neutral
+> generation mode or an equivalent supported API.
+
 ## Architecture
 
 ```text
 Claude Code 2.1.220 (isolated Linux container)
   -> http://omniroute:20128/v1/messages
   -> devin-cli-agentic (Claude-format, no-auth provider)
-  -> devin acp --agent-type summarizer (ACP v1 over stdio)
+  -> devin acp (ACP v1 over stdio; internal Devin tool-call events are rejected)
   -> Devin account in the dedicated devin-auth volume (live profile only)
 ```
 
@@ -25,6 +33,11 @@ the requested name against the request's tool list, validates arguments against 
 tool's JSON Schema, rejects mixed narrative/actions, and permits one bounded repair.
 Claude Code executes the resulting Anthropic `tool_use`; Devin never executes those local
 tools through this adapter.
+
+The executor intentionally starts the default `devin acp` agent with every ACP client
+capability disabled. Any `tool_call` or `tool_call_update` emitted by Devin aborts the turn
+before OmniRoute can report success. This guard is required because allowing the default
+agent to execute tools would make Devin, rather than Claude Code, the agentic runtime.
 
 ## Threat model and isolation
 
@@ -81,6 +94,10 @@ locate, read, edit, test, observe a failure, repair, retest, and finish. Evidenc
 unversioned in `.sandbox/evidence`.
 
 ## Devin login and live use
+
+The commands below are retained for reproducing the live compatibility check. They are not
+a claim that the bridge is live-ready; the current pinned CLI fails closed for the reason
+documented above.
 
 Authentication uses only the official CLI inside the dedicated volume. It never imports a
 host session:
@@ -156,6 +173,11 @@ isolated databases, and evidence.
 
 ## Limits
 
+- **Blocking limitation:** official Devin CLI `3000.2.17` offers `summarizer` (no tools,
+  fixed summarization behavior), `review` (read-only and shell tools), or the default agent.
+  There is no documented neutral text-generation agent that both follows the envelope and
+  structurally cannot execute tools. The default agent emitted internal tool calls in the
+  authorized live test, and OmniRoute rejected them with `502`.
 - ACP context is reconstructed from each Anthropic request; there is no persistent process
   or session affinity.
 - One tool call is supported per model response; parallel tool calls are rejected.
