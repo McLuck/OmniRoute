@@ -158,3 +158,95 @@ Run: `./scripts/devin-bridge/test-e2e-mock`; expected: workspace diff and tests 
 - [ ] **Run focused suites, typecheck, lint, build, docs checks, offline E2E, and isolation proof with fresh output; then run live only after official in-container Devin login**
 
 If login is unavailable, record live as not tested and expose exactly `./scripts/devin-bridge/login-devin` followed by `./scripts/devin-bridge/test-live-devin`. Commit each reversible unit; do not merge or publish until all offline critical checks are green.
+
+### Task 10: Close The Authenticated Live Runtime
+
+**Files:**
+- Modify: `open-sse/executors/devin-cli-agentic.ts`
+- Modify: `docker/devin-bridge/compose.yml`
+- Create: `docker/devin-bridge/network-guard/policy.mjs`
+- Modify: `docker/devin-bridge/network-guard/proxy.mjs`
+- Modify: `scripts/devin-bridge/select-live-model.mjs`
+- Modify: `scripts/devin-bridge/common`
+- Modify: `scripts/devin-bridge/login-devin`
+- Modify: `scripts/devin-bridge/test-live-devin`
+- Modify: `scripts/devin-bridge/verify-anthropic-isolation`
+- Modify: `tests/unit/executor-devin-cli-agentic-acp.test.ts`
+- Create: `tests/unit/devin-bridge-live-runtime.test.ts`
+
+- [ ] **Implement and prove the authenticated network, auth, and catalog boundaries with block-level TDD**
+
+Invariants:
+
+- The ACP child receives proxy variables only when `DEVIN_BRIDGE_PROXY_URL` is exactly
+  `http://network-guard:8080`; arbitrary inherited proxy and credential variables stay absent.
+- The guard permits suffixes `.devin.ai` and `.cognition.ai`, exact hosts
+  `server.codeium.com` and `unleash.codeium.com`, and nothing else.
+- Claude services cannot mount `devin-auth`; non-Claude services cannot mount the Claude config.
+- A zero exit from `devin auth status` is insufficient when output contains a server-fetch failure.
+- `family_uid: swe-1.7-lightning` resolves to catalog id `swe-1-7-lightning`; unknown normalized
+  values fail instead of becoming model ids.
+- Login uses the official manual-token flow so no container loopback callback is required.
+
+Run:
+
+```bash
+./scripts/devin-bridge/test-unit
+node --import tsx/esm --test tests/unit/devin-bridge-live-runtime.test.ts
+./scripts/devin-bridge/verify-anthropic-isolation --static
+```
+
+Expected: focused tests and static isolation pass; deliberate untrusted proxy, host, mount, auth
+status, and model fixtures fail closed.
+
+- [ ] **Commit the reversible live-runtime repair**
+
+```bash
+git add open-sse/executors/devin-cli-agentic.ts docker/devin-bridge \
+  scripts/devin-bridge tests/unit/devin-bridge-live-runtime.test.ts \
+  tests/unit/executor-devin-cli-agentic-acp.test.ts
+git commit -m "fix: close Devin bridge live runtime gaps"
+```
+
+### Task 11: Prove Offline And Live Completion
+
+**Files:**
+- Modify: `docker/devin-bridge/run-claude-live-e2e.sh`
+- Modify: `docs/DEVIN_CLAUDE_BRIDGE.md`
+- Modify: `docs/DEVIN_CLAUDE_BRIDGE_PROGRESS.md`
+
+- [ ] **Run the complete deterministic bridge proof before any paid request**
+
+```bash
+./scripts/devin-bridge/test-unit
+./scripts/devin-bridge/test-contract
+./scripts/devin-bridge/test-e2e-mock
+./scripts/devin-bridge/verify-anthropic-isolation
+npm run typecheck:core
+npm run lint
+npm run build
+npm run check:docs-all
+```
+
+Expected: all bridge-specific checks, typecheck, lint, build, and documentation checks pass with
+isolated data paths. Any unrelated full-suite infrastructure hang is recorded separately and is
+not converted into a pass.
+
+- [ ] **Run exactly the three authorized live scenarios and the no-fallback failure probe**
+
+```bash
+ENABLE_LIVE_DEVIN_TESTS=1 ./scripts/devin-bridge/test-live-devin
+```
+
+Expected: dynamic discovery selects a returned Devin catalog model; Claude Code reads without
+editing, then edits and runs the fixture test, then executes the fixture command. Evidence shows
+native tool use by Claude Code, only `devin-cli-agentic` routing, no allowed non-Devin egress,
+and an Anthropic-shaped error after the Devin backend is deliberately made unavailable.
+
+- [ ] **Update verified documentation and commit the evidence-backed delivery state**
+
+```bash
+git add docker/devin-bridge/run-claude-live-e2e.sh docs/DEVIN_CLAUDE_BRIDGE.md \
+  docs/DEVIN_CLAUDE_BRIDGE_PROGRESS.md
+git commit -m "docs: record verified Devin bridge live delivery"
+```

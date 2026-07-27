@@ -79,3 +79,37 @@ The offline profile must prove the ACP lifecycle, fragmented frames, stderr, ear
 ## Safety Incident During Baseline
 
 The first focused test was run without `DATA_DIR` isolation and initialized `/Users/lucasisrael/.omniroute/storage.sqlite`; logs reported schema-column additions. No Anthropic data was accessed. The external database will not be touched again or destructively rolled back. Every bridge command and test now must set `HOME`, `DATA_DIR`, `SQLITE_FILE`, and temporary directories inside `.sandbox`, and an automated guard must reject paths outside the task workspace.
+
+## Live Completion Repair
+
+The first authenticated live attempt disproved four assumptions in the initial container
+design. The official CLI reports a valid login even when its server-status request fails;
+that request uses the exact hosts `server.codeium.com` and `unleash.codeium.com`, which the
+guard denied. The OmniRoute executor also built a fresh allowlisted child environment that
+omitted the proxy, so `devin acp` could not leave the internal network. Model discovery emits
+family identifiers such as `swe-1.7`, while the OmniRoute catalog uses canonical ids such as
+`swe-1-7`. Finally, browser login redirects to a loopback listener inside the one-off
+container, which is not reachable from the host browser.
+
+The repair keeps the fully containerized architecture and does not weaken the deny-by-default
+network. The guard gains an exact-host allowlist for the two Codeium control-plane hosts while
+retaining suffix-based access only for Devin and Cognition; telemetry destinations such as
+Sentry remain denied. Compose supplies `DEVIN_BRIDGE_PROXY_URL` with the single accepted value
+`http://network-guard:8080`, and the executor derives `HTTP_PROXY` and `HTTPS_PROXY` from that
+explicit bridge setting instead of inheriting arbitrary host proxy variables. Claude services
+mount only the Claude config volume, and only the OmniRoute live service mounts the Devin auth
+volume.
+
+Fresh login uses the official `devin auth login --force-manual-token-flow`, which is intended
+for remote environments where localhost redirects cannot work. The credential is pasted only
+into the interactive CLI terminal and never appears in arguments, logs, evidence, or Git.
+Authentication validation requires both the logged-in marker and the absence of a server-fetch
+failure. Model discovery accepts the real `family_uid`/`model_uid` fields, maps punctuation to a
+catalog id only after an exact normalized match, and prefers the already-proved lightning model
+when available.
+
+Tests first prove the trusted proxy boundary, exact host policy, volume separation, strict auth
+status gate, and catalog normalization. The live gate then runs three real Claude Code scenarios
+through the authenticated in-container Devin CLI and requires local Read/Edit/Bash activity,
+passing fixture tests, Devin-only routing, no allowed non-Devin egress, and an explicit error
+when the Devin backend is stopped.
