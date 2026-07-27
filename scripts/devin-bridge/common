@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BRIDGE_COMPOSE="$BRIDGE_ROOT/docker/devin-bridge/compose.yml"
+BRIDGE_SANDBOX="$BRIDGE_ROOT/.sandbox"
+bridge_prepare_sandbox() {
+  mkdir -p "$BRIDGE_SANDBOX/home" "$BRIDGE_SANDBOX/test-data" \
+    "$BRIDGE_SANDBOX/e2e-workspace" "$BRIDGE_SANDBOX/live-workspace" \
+    "$BRIDGE_SANDBOX/evidence"
+  chmod 0777 "$BRIDGE_SANDBOX/e2e-workspace" "$BRIDGE_SANDBOX/live-workspace" \
+    "$BRIDGE_SANDBOX/evidence"
+}
+bridge_reset_e2e_fixture() {
+  bridge_prepare_sandbox
+  cp -R "$BRIDGE_ROOT/tests/fixtures/devin-bridge/e2e-workspace/." \
+    "$BRIDGE_SANDBOX/e2e-workspace/"
+  rm -f "$BRIDGE_SANDBOX/e2e-workspace/.e2e-hook.log" \
+    "$BRIDGE_SANDBOX/evidence/claude-stream.jsonl" \
+    "$BRIDGE_SANDBOX/evidence/mock-acp.jsonl"
+}
+bridge_reset_live_fixture() {
+  bridge_prepare_sandbox
+  cp -R "$BRIDGE_ROOT/tests/fixtures/devin-bridge/e2e-workspace/." \
+    "$BRIDGE_SANDBOX/live-workspace/"
+  rm -f "$BRIDGE_SANDBOX/live-workspace/.e2e-hook.log" \
+    "$BRIDGE_SANDBOX/evidence/live-analysis.jsonl" \
+    "$BRIDGE_SANDBOX/evidence/live-fix.jsonl" \
+    "$BRIDGE_SANDBOX/evidence/live-command.jsonl" \
+    "$BRIDGE_SANDBOX/evidence/live-models.json" \
+    "$BRIDGE_SANDBOX/evidence/egress.jsonl"
+}
+bridge_test_env() {
+  bridge_prepare_sandbox
+  env HOME="$BRIDGE_SANDBOX/home" DATA_DIR="$BRIDGE_SANDBOX/test-data" SQLITE_FILE="$BRIDGE_SANDBOX/test-data/storage.sqlite" DEVIN_AGENTIC_HOME="$BRIDGE_SANDBOX/home" "$@"
+}

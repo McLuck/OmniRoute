@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-if [[ "${ENABLE_LIVE_DEVIN_TESTS:-}" != "1" && "${DEVIN_BRIDGE_OFFLINE:-}" != "1" ]]; then
-  printf 'Set DEVIN_BRIDGE_OFFLINE=1 for mock/offline mode or ENABLE_LIVE_DEVIN_TESTS=1 for live Devin.\n' >&2
-  exit 1
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-"$SCRIPT_DIR/verify-anthropic-isolation"
-
-printf 'Bridge launch preflight passed. Start Claude Code only inside the isolated container/profile.\n'
-
+source "$(dirname "$0")/common"
+bridge_prepare_sandbox
+"$(dirname "$0")/verify-anthropic-isolation"
+docker compose -f "$BRIDGE_COMPOSE" --profile offline --profile live-devin down --remove-orphans
+docker compose -f "$BRIDGE_COMPOSE" --profile live-devin up -d network-guard
+docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps omniroute-live \
+  devin auth status
+docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps omniroute-live \
+  devin models list --format json >"$BRIDGE_SANDBOX/evidence/live-models.json"
+devin_model="$(node --import tsx/esm "$BRIDGE_ROOT/scripts/devin-bridge/select-live-model.mjs" \
+  <"$BRIDGE_SANDBOX/evidence/live-models.json")"
+export DEVIN_BRIDGE_MODEL="devin-cli-agentic/$devin_model"
+export DEVIN_BRIDGE_SONNET_MODEL="${DEVIN_BRIDGE_SONNET_MODEL:-$DEVIN_BRIDGE_MODEL}"
+export DEVIN_BRIDGE_OPUS_MODEL="${DEVIN_BRIDGE_OPUS_MODEL:-$DEVIN_BRIDGE_MODEL}"
+export DEVIN_BRIDGE_HAIKU_MODEL="${DEVIN_BRIDGE_HAIKU_MODEL:-$DEVIN_BRIDGE_MODEL}"
+export DEVIN_BRIDGE_SUBAGENT_MODEL="${DEVIN_BRIDGE_SUBAGENT_MODEL:-$DEVIN_BRIDGE_MODEL}"
+docker compose -f "$BRIDGE_COMPOSE" --profile live-devin up -d --wait omniroute-live
+exec docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps \
+  claude-live claude

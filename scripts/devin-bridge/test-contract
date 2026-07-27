@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/common"
+bridge_prepare_sandbox
+rm -f "$BRIDGE_SANDBOX/evidence/mock-acp.jsonl"
+"$(dirname "$0")/verify-anthropic-isolation" --static
+docker compose -f "$BRIDGE_COMPOSE" --profile offline down --remove-orphans
+docker compose -f "$BRIDGE_COMPOSE" --profile offline up --abort-on-container-exit \
+  --exit-code-from contract contract
+node -e '
+  const fs = require("node:fs");
+  const rows = fs.readFileSync(process.argv[1], "utf8").trim().split("\n").map(JSON.parse);
+  if (rows.length !== 5 || rows.some((row) => row.provider !== "devin-cli-agentic")) {
+    throw new Error("wire contract observed a missing or non-Devin provider");
+  }
+' "$BRIDGE_SANDBOX/evidence/mock-acp.jsonl"
+printf 'PASS: bridge wire contract suite completed without provider fallback\n'

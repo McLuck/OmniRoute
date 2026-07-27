@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/common"
+bridge_reset_e2e_fixture
+"$(dirname "$0")/verify-anthropic-isolation" --static
+docker compose -f "$BRIDGE_COMPOSE" --profile offline down --remove-orphans
+docker compose -f "$BRIDGE_COMPOSE" --profile offline up --abort-on-container-exit \
+  --exit-code-from claude claude
+grep -q '"action":"final"' "$BRIDGE_SANDBOX/evidence/mock-acp.jsonl"
+grep -q 'BRIDGE_E2E_COMPLETE' "$BRIDGE_SANDBOX/evidence/claude-stream.jsonl"
+printf 'PASS: real Claude Code completed the offline agentic fixture\n'

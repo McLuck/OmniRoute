@@ -1,43 +1,71 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-fail() {
-  printf 'FAIL: %s\n' "$1" >&2
-  exit 1
-}
-
-case "${CLAUDE_CONFIG_DIR:-}" in
-  /home/bridge/.claude-devin-isolated|*/.sandbox/*|*/claude-devin-isolated*)
-    ;;
-  "")
-    fail "CLAUDE_CONFIG_DIR is not set"
-    ;;
-  *)
-    fail "CLAUDE_CONFIG_DIR must point at an isolated bridge directory"
-    ;;
-esac
-
-for key in \
-  ANTHROPIC_API_KEY \
-  CLAUDE_CODE_OAUTH_TOKEN \
-  ANTHROPIC_BEDROCK_BASE_URL \
-  ANTHROPIC_VERTEX_BASE_URL \
-  CLAUDE_CODE_USE_BEDROCK \
-  CLAUDE_CODE_USE_VERTEX \
-  CLAUDE_CODE_USE_FOUNDRY
-do
-  if [[ -n "${!key:-}" ]]; then
-    fail "$key must be unset"
-  fi
+source "$(dirname "$0")/common"
+fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+bridge_prepare_sandbox
+config="$(docker compose -f "$BRIDGE_COMPOSE" --profile offline --profile live-devin config)"
+config_json="$(docker compose -f "$BRIDGE_COMPOSE" --profile offline --profile live-devin config --format json)"
+for forbidden in "$HOME/.claude" "$HOME/.claude.json" "$HOME/.ssh" "/var/run/docker.sock"; do
+  [[ "$config" != *"$forbidden"* ]] || fail "forbidden host mount appears in compose: $forbidden"
 done
-
-if [[ "${ANTHROPIC_BASE_URL:-}" != "http://omniroute:20128" && "${ANTHROPIC_BASE_URL:-}" != http://127.0.0.1:* && "${ANTHROPIC_BASE_URL:-}" != http://localhost:* ]]; then
-  fail "ANTHROPIC_BASE_URL must target local OmniRoute"
-fi
-
-if [[ "${ANTHROPIC_AUTH_TOKEN:-}" != sk-local-* ]]; then
-  fail "ANTHROPIC_AUTH_TOKEN must be a local bridge token"
-fi
-
-printf 'PASS: Anthropic isolation environment looks local and isolated\n'
-
+grep -q 'user: 10001:10001' <<<"$config" || fail "runtime is not non-root"
+grep -q 'read_only: true' <<<"$config" || fail "runtime root filesystem is not read-only"
+grep -q 'internal: true' <<<"$config" || fail "internal network is missing"
+grep -q 'CLAUDE_CONFIG_DIR: /home/bridge/.claude-devin-isolated' <<<"$config" || fail "isolated Claude config is missing"
+node -e '
+  const fs = require("node:fs");
+  const config = JSON.parse(fs.readFileSync(0, "utf8"));
+  const liveNetworks = Object.keys(config.services["omniroute-live"].networks || {}).sort();
+  if (JSON.stringify(liveNetworks) !== JSON.stringify(["bridge-internal"])) {
+    throw new Error(`live runtime network escape: ${liveNetworks.join(",")}`);
+  }
+  const guardNetworks = Object.keys(config.services["network-guard"].networks || {}).sort();
+  if (JSON.stringify(guardNetworks) !== JSON.stringify(["bridge-internal", "guard-egress"])) {
+    throw new Error(`network guard topology mismatch: ${guardNetworks.join(",")}`);
+  }
+  if (config.services["network-guard"].environment.GUARD_ALLOW_SUFFIXES !== ".devin.ai,.cognition.ai") {
+    throw new Error("network guard allowlist mismatch");
+  }
+  for (const serviceName of ["omniroute", "claude", "contract", "omniroute-live", "claude-live"]) {
+    const service = config.services[serviceName];
+    if (String(service.user) !== "10001:10001" || !service.read_only) {
+      throw new Error(`${serviceName} is not non-root and read-only`);
+    }
+    const configMount = (service.volumes || []).find(
+      (mount) => mount.target === "/home/bridge/.claude-devin-isolated",
+    );
+    if (!configMount || configMount.type !== "volume") {
+      throw new Error(`${serviceName} does not use the isolated named Claude volume`);
+    }
+    for (const key of [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+    ]) {
+      if (!String(service.environment[key] || "").startsWith("devin-cli-agentic/")) {
+        throw new Error(`${serviceName} has a non-Devin model alias in ${key}`);
+      }
+    }
+  }
+' <<<"$config_json" || fail "structured compose isolation checks failed"
+if [[ "${1:-}" == --static ]]; then printf 'PASS: static bridge isolation checks passed\n'; exit 0; fi
+docker compose -f "$BRIDGE_COMPOSE" --profile offline run --rm --no-deps claude bash -ceu '
+  test "$(id -u)" = 10001
+  test "$HOME" = /home/bridge
+  test "$CLAUDE_CONFIG_DIR" = /home/bridge/.claude-devin-isolated
+  test "$ANTHROPIC_BASE_URL" = http://omniroute:20128
+  test "$ANTHROPIC_AUTH_TOKEN" = sk-local-devin-gateway
+  test -z "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}${AWS_ACCESS_KEY_ID:-}${AWS_SECRET_ACCESS_KEY:-}${GOOGLE_APPLICATION_CREDENTIALS:-}${AZURE_OPENAI_API_KEY:-}"
+  test ! -e /var/run/docker.sock
+  if touch /bridge-must-remain-read-only 2>/dev/null; then
+    echo "container root filesystem is writable" >&2; exit 1
+  fi
+  for host in api.anthropic.com claude.ai; do
+    if node -e "require(\"net\").connect(443,process.argv[1]).on(\"connect\",()=>process.exit(0)).on(\"error\",()=>process.exit(1)).setTimeout(1500,()=>process.exit(1))" "$host"; then
+      echo "unexpected network access to $host" >&2; exit 1
+    fi
+  done
+'
+printf 'PASS: runtime bridge isolation checks passed\n'
