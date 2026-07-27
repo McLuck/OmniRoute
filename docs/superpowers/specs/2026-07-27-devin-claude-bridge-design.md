@@ -60,9 +60,9 @@ Focused unit tests cover serialization, tool parsing, validation, Anthropic JSON
 
 ## Mandatory Runtime Isolation
 
-The bridge runs only through `docker/devin-bridge/compose.yml`. The runtime image is non-root, uses a private `/home/bridge`, and mounts only this fork read-only plus a disposable workspace. It never mounts the host home, Docker socket, SSH, cloud credentials, or global Claude configuration. The container receives an explicit environment allowlist; the executor also constructs an allowlisted child environment instead of copying `process.env`.
+The bridge runs only through `docker/devin-bridge/compose.yml`. The runtime image is non-root, uses a private `/home/bridge`, and mounts only disposable workspaces, evidence, and bridge harness files. Application source is copied into the image. It never mounts the host home, Docker socket, SSH, cloud credentials, or global Claude configuration. The container receives an explicit environment allowlist; the executor also constructs an allowlisted child environment instead of copying `process.env`.
 
-Build-time network access installs Claude Code `2.1.220` and Devin CLI `3000.2.17` with pinned integrity/checksum. Runtime profiles are separate: `offline` has `network_mode: none` for Claude plus an internal-only OmniRoute/mock network; `live-devin` has controlled egress through a DNS/proxy guard that denies Anthropic, Claude, Statsig, and Sentry domains and records attempted destinations. Devin authentication lives only in the named `devin-auth` volume. Claude configuration lives in a different named volume and is initialized empty.
+Build-time network access installs Claude Code `2.1.220` and Devin CLI `3000.2.17` with pinned integrity/checksum. Runtime profiles are separate: `offline` uses only an internal Compose network; `live-devin` exposes egress only through a proxy guard whose allowlist contains Devin/Cognition suffixes and whose default is denial. Devin authentication lives only in the named `devin-auth` volume. Claude configuration lives in a different named volume and is initialized empty.
 
 ## Fail-Closed Routing
 
