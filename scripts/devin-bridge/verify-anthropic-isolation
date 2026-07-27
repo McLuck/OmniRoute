@@ -187,6 +187,7 @@ grep -q 'bridge_check_devin_auth' "$BRIDGE_ROOT/scripts/devin-bridge/launch" || 
 grep -q 'up -d network-guard claude-egress-guard' "$BRIDGE_ROOT/scripts/devin-bridge/launch" || \
   fail "normal launch does not start the audited Claude egress guard"
 if [[ "${1:-}" == --static ]]; then printf 'PASS: static bridge isolation checks passed\n'; exit 0; fi
+bridge_reset_claude_egress_audit
 docker compose -f "$BRIDGE_COMPOSE" --profile offline up -d claude-egress-guard
 cleanup_claude_guard() {
   docker compose -f "$BRIDGE_COMPOSE" --profile offline stop claude-egress-guard >/dev/null 2>&1 || true
@@ -209,6 +210,30 @@ docker compose -f "$BRIDGE_COMPOSE" --profile offline run --rm --no-deps claude 
     fi
   done
 '
+docker compose -f "$BRIDGE_COMPOSE" --profile offline run --rm --no-deps claude \
+  node --input-type=module -e '
+  async function expectProxyDenial(request) {
+    try {
+      const response = await request;
+      if (response.status !== 403) {
+        throw new Error(`unexpected proxy response: ${response.status}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("unexpected proxy response:")) {
+        throw error;
+      }
+    }
+  }
+  await expectProxyDenial(fetch("https://api.anthropic.com", {
+    signal: AbortSignal.timeout(3000),
+  }));
+  await expectProxyDenial(fetch("https://claude.ai", {
+    signal: AbortSignal.timeout(3000),
+  }));
+'
+bridge_assert_claude_guard_denials "$BRIDGE_SANDBOX/evidence/claude-egress.jsonl" || \
+  fail "Claude proxy denial audit proof failed"
 cleanup_claude_guard
 trap - EXIT
+bridge_reset_claude_egress_audit
 printf 'PASS: runtime bridge isolation checks passed\n'
