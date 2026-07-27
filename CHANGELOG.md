@@ -154,6 +154,7 @@ _Living section — regenerated 2026-07-19 from all 306 cycle commits (bump 2c62
 - **feat(github-models):** refresh catalog and compatibility ([#8225](https://github.com/diegosouzapw/OmniRoute/pull/8225)) — thanks @backryun
 - **feat(github):** refresh Copilot model catalog ([#8226](https://github.com/diegosouzapw/OmniRoute/pull/8226)) — thanks @backryun
 - **feat:** classify grok-web Cloudflare anti-bot blocks + gated browser-backed cf_clearance path (#8019) ([#8241](https://github.com/diegosouzapw/OmniRoute/pull/8241))
+- **feat(providers):** weekly quota for xAI OAuth (Grok) (`xai-oauth` / `xao`) via shared cli-chat-proxy billing (`creditUsagePercent`), with fail-open self-tracked fallback ([#8471](https://github.com/diegosouzapw/OmniRoute/pull/8471)) — thanks @allanvb
 ### ⚡ Performance
 
 - **perf(db):** project columns + composite index in getProviderConnections ([#6918](https://github.com/diegosouzapw/OmniRoute/pull/6918)) — thanks @oyi77

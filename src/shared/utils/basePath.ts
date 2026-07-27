@@ -19,7 +19,7 @@ export function normalizeBasePath(value?: string | null): string {
  * Set via next.config `env.NEXT_PUBLIC_OMNIROUTE_BASE_PATH` from `OMNIROUTE_BASE_PATH`.
  */
 export function getDeployBasePath(
-  env: NodeJS.ProcessEnv = typeof process !== "undefined" ? process.env : {}
+  env: NodeJS.ProcessEnv = typeof process !== "undefined" ? process.env : ({} as NodeJS.ProcessEnv)
 ): string {
   return normalizeBasePath(
     env.NEXT_PUBLIC_OMNIROUTE_BASE_PATH || env.OMNIROUTE_BASE_PATH || ""
