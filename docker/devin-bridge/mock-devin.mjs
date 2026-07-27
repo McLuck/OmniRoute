@@ -2,11 +2,7 @@
 import fs from "node:fs";
 import readline from "node:readline";
 
-if (
-  process.argv[2] !== "acp" ||
-  process.argv[3] !== "--agent-type" ||
-  process.argv[4] !== "summarizer"
-) {
+if (process.argv[2] !== "acp" || process.argv.length !== 3) {
   process.exit(64);
 }
 
@@ -112,6 +108,32 @@ rl.on("line", (line) => {
           update: {
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: "contract text" },
+          },
+        },
+      });
+      send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+      return;
+    }
+    if (prompt.includes("CONTRACT_NARRATIVE_REPAIR")) {
+      const isRepair = prompt.includes("[Single Repair Attempt]");
+      log({
+        provider: "devin-cli-agentic",
+        scenario: "narrative-repair",
+        stage: isRepair ? "repair" : "initial",
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "offline",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: isRepair
+                ? '<tool>{"name":"Read","arguments":{"file_path":"/workspace/math.js"}}</tool>'
+                : "I'll start by reading the math.js file, then run the tests.",
+            },
           },
         },
       });

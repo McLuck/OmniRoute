@@ -122,6 +122,7 @@ test("compose keeps role-separated credentials and proxy settings", () => {
 
 test("auth status requires the exact positive line and rejects misleading text", () => {
   assert.equal(validateDevinAuthStatus(0, "Logged in (via Devin)\n").ok, true);
+  assert.equal(validateDevinAuthStatus(0, "Logged in (via Devin).\n").ok, true);
   for (const output of [
     "Not Logged in (via Devin)\n",
     "prefix Logged in (via Devin) suffix\n",
@@ -185,7 +186,21 @@ test("audit policies reject forged metadata, missing proof, and unexpected Devin
     true
   );
   assert.equal(
-    validateDevinGuardAudit('{"hostname":"o1.ingest.sentry.io","decision":"deny"}\n').ok,
+    validateDevinGuardAudit(
+      '{"hostname":"o1.ingest.sentry.io","decision":"deny"}\n' +
+        '{"hostname":"api.devin.ai","decision":"allow"}\n'
+    ).ok,
+    true
+  );
+  assert.equal(
+    validateDevinGuardAudit('{"hostname":"api.devin.ai","decision":"deny"}\n').ok,
+    false
+  );
+  assert.equal(
+    validateDevinGuardAudit(
+      '{"hostname":"api.anthropic.com","decision":"deny"}\n' +
+        '{"hostname":"api.devin.ai","decision":"allow"}\n'
+    ).ok,
     false
   );
 });

@@ -70,6 +70,26 @@ assert.equal(toolUse?.type, "tool_use");
 assert.equal(toolUse?.name, "Read");
 assert.match(toolUse?.id || "", /^tool_devin_/);
 
+const repairedNarrativeReply = await request("CONTRACT_NARRATIVE_REPAIR", {
+  tools: [
+    {
+      name: "Read",
+      description: "Read a file",
+      input_schema: {
+        type: "object",
+        properties: { file_path: { type: "string" } },
+        required: ["file_path"],
+        additionalProperties: false,
+      },
+    },
+  ],
+});
+assert.equal(repairedNarrativeReply.status, 200);
+const repairedNarrativeBody = await repairedNarrativeReply.json();
+assert.equal(repairedNarrativeBody.stop_reason, "tool_use");
+assert.equal(repairedNarrativeBody.content?.[0]?.type, "tool_use");
+assert.equal(repairedNarrativeBody.content?.[0]?.name, "Read");
+
 const continuationReply = await fetch(endpoint, {
   method: "POST",
   headers,

@@ -34,7 +34,14 @@ const REPAIRABLE_TOOL_ERRORS = new Set([
   "invalid_tool_arguments",
   "multiple_tool_requests",
   "mixed_tool_narrative",
+  "unexecuted_tool_intent",
 ]);
+
+function describesUnexecutedToolIntent(text: string): boolean {
+  return /\b(?:i(?:'ll| will)|let me)\b[^\n.!?]{0,160}\b(?:read|inspect|examine|edit|fix|run|check|test|start)\b/i.test(
+    text
+  );
+}
 
 const CLAUDE_ENV_BLOCKLIST = [
   "ANTHROPIC_API_KEY",
@@ -142,7 +149,7 @@ export async function runAcpTurn(args: {
   log?: ExecuteInput["log"];
 }) {
   const timeoutMs = Number(process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS || 120000);
-  const child = spawn(args.devinBin, ["acp", "--agent-type", "summarizer"], {
+  const child = spawn(args.devinBin, ["acp"], {
     env: args.env,
     cwd: args.env.HOME,
     stdio: ["pipe", "pipe", "pipe"],
@@ -304,6 +311,16 @@ export async function runAcpTurn(args: {
           }
           const update = asRecord(params.update);
           const kind = String(update.sessionUpdate || params.type || "");
+          if (kind === "tool_call" || kind === "tool_call_update") {
+            finish(
+              new DevinAgenticBridgeError(
+                "Devin attempted to execute a tool internally; Claude Code must own all tool execution",
+                "devin_internal_tool_execution",
+                502
+              )
+            );
+            return;
+          }
           if (kind === "agent_message_chunk") {
             text += extractText(update.content);
           } else if (
@@ -439,6 +456,12 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
       let text = await generateAgenticOutput(turnArgs, prompt.text);
       let tool;
       try {
+        if (prompt.tools.length > 0 && describesUnexecutedToolIntent(text)) {
+          throw new DevinAgenticBridgeError(
+            "The response described a future action without performing it; call exactly one tool now",
+            "unexecuted_tool_intent"
+          );
+        }
         tool = parseDevinToolRequest(text, prompt.tools, prompt.idSeed);
       } catch (error) {
         if (
@@ -447,6 +470,7 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
         ) {
           throw error;
         }
+        const requiresToolOnRepair = error.code === "unexecuted_tool_intent";
         const repairPrompt = [
           prompt.text,
           "",
@@ -454,11 +478,20 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
           "",
           "[Single Repair Attempt]",
           `The previous output was rejected: ${sanitizeErrorMessage(error.message)}`,
-          "Return either plain final text or exactly one standalone <tool> JSON envelope.",
+          requiresToolOnRepair
+            ? "Plain text is not accepted for this repair. Return exactly one standalone <tool> JSON envelope now."
+            : "Return either plain final text or exactly one standalone <tool> JSON envelope.",
           "Do not narrate a tool action.",
         ].join("\n");
         text = await generateAgenticOutput(turnArgs, repairPrompt);
         tool = parseDevinToolRequest(text, prompt.tools, prompt.idSeed);
+        if (requiresToolOnRepair && !tool) {
+          throw new DevinAgenticBridgeError(
+            "Devin repeated a narrated tool action instead of requesting a tool",
+            "unexecuted_tool_intent",
+            502
+          );
+        }
       }
 
       const id = `msg_devin_${randomUUID().replaceAll("-", "")}`;

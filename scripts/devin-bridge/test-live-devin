@@ -8,9 +8,20 @@ bridge_reset_live_fixture
 "$(dirname "$0")/verify-anthropic-isolation" --static
 docker compose -f "$BRIDGE_COMPOSE" --profile live-devin up -d --wait network-guard
 bridge_check_devin_auth
-bridge_run_devin models list --format json >"$BRIDGE_SANDBOX/evidence/live-models.json"
-devin_model="$(node --import tsx/esm "$BRIDGE_ROOT/scripts/devin-bridge/select-live-model.mjs" \
-  <"$BRIDGE_SANDBOX/evidence/live-models.json")"
+models_file="$BRIDGE_SANDBOX/evidence/live-models.json"
+if [[ -n "${DEVIN_BRIDGE_DISCOVERED_MODEL:-}" ]]; then
+  devin_model="$DEVIN_BRIDGE_DISCOVERED_MODEL"
+else
+  for attempt in 1 2 3; do
+    if bridge_run_devin models list --format json >"$models_file"; then
+      break
+    fi
+    [[ "$attempt" == 3 ]] && exit 1
+    sleep 1
+  done
+  devin_model="$(node --import tsx/esm "$BRIDGE_ROOT/scripts/devin-bridge/select-live-model.mjs" \
+    <"$models_file")"
+fi
 export DEVIN_BRIDGE_MODEL="devin-cli-agentic/$devin_model"
 export DEVIN_BRIDGE_SONNET_MODEL="$DEVIN_BRIDGE_MODEL"
 export DEVIN_BRIDGE_OPUS_MODEL="$DEVIN_BRIDGE_MODEL"

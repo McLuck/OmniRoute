@@ -229,11 +229,7 @@ test("DevinCliAgenticExecutor returns Anthropic tool_use JSON and sends ACP fram
     const initialize = frames.find((frame: { method?: string }) => frame.method === "initialize");
     assert.equal(initialize.params.protocolVersion, 1);
     assert.deepEqual(initialize.params.clientCapabilities, {});
-    assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), [
-      "acp",
-      "--agent-type",
-      "summarizer",
-    ]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), ["acp"]);
   } finally {
     if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
     else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;
@@ -299,6 +295,31 @@ test("ACP client handles fragmented frames, multiple chunks, and stderr", async 
   }
 });
 
+test("ACP client fails closed when Devin attempts an internal tool call", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-internal-tool-");
+  const scriptFile = writeScenarioMock(
+    tmpDir,
+    `rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "internal-tool" } });
+  if (msg.method === "session/prompt") {
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "internal-tool", update: { sessionUpdate: "tool_call", toolCallId: "internal-1", title: "Read a.ts" } } });
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "internal-tool", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done" } } } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+  }
+});`
+  );
+  try {
+    const result = await executeTextRequest(scriptFile);
+    assert.equal(result.response.status, 502);
+    const body = JSON.parse(await result.response.text());
+    assert.equal(body.error.code, "devin_internal_tool_execution");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("ACP client fails closed on protocol errors and early exit", async () => {
   const cases = [
     {
@@ -354,7 +375,7 @@ test("ACP client times out, cancels, and terminates a stuck process", async () =
   }
 });
 
-test("tool repair is attempted once and produces a validated tool_use", async () => {
+test("premature tool narration is repaired once into a validated tool_use", async () => {
   const tmpDir = sandboxTmp("devin-agentic-repair-");
   const stateFile = path.join(tmpDir, "spawn-count");
   const scriptFile = writeScenarioMock(
@@ -369,7 +390,7 @@ rl.on("line", (line) => {
   if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "repair" } });
   if (msg.method === "session/prompt") {
     const text = count === 1
-      ? 'I will read it. <tool>{"name":"Read","arguments":{"file_path":"a.ts"}}</tool>'
+      ? 'I will read the file and start by examining its contents.'
       : '<tool>{"name":"Read","arguments":{"file_path":"a.ts"}}</tool>';
     send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "repair", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
@@ -399,6 +420,60 @@ rl.on("line", (line) => {
     });
     assert.equal(result.response.status, 200, await result.response.clone().text());
     assert.equal(JSON.parse(await result.response.text()).stop_reason, "tool_use");
+    assert.equal(fs.readFileSync(stateFile, "utf8"), "2");
+  } finally {
+    if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
+    else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("premature tool narration fails closed when the single repair is still narrative", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-repair-narrative-");
+  const stateFile = path.join(tmpDir, "spawn-count");
+  const scriptFile = writeScenarioMock(
+    tmpDir,
+    `const fs = require("fs");
+const stateFile = ${JSON.stringify(stateFile)};
+const count = Number(fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf8") : "0") + 1;
+fs.writeFileSync(stateFile, String(count));
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "repair-narrative" } });
+  if (msg.method === "session/prompt") {
+    const text = count === 1
+      ? "I'll start by reading the file."
+      : "I'll read the file now, then run the tests.";
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "repair-narrative", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+  }
+});`
+  );
+  const oldBin = process.env.CLI_DEVIN_AGENTIC_BIN;
+  process.env.CLI_DEVIN_AGENTIC_BIN = scriptFile;
+  try {
+    const result = await new DevinCliAgenticExecutor().execute({
+      model: "swe-1-7",
+      stream: false,
+      credentials: {},
+      body: {
+        tools: [
+          {
+            name: "Read",
+            input_schema: {
+              type: "object",
+              required: ["file_path"],
+              properties: { file_path: { type: "string" } },
+            },
+          },
+        ],
+        messages: [{ role: "user", content: "Read a.ts" }],
+      },
+    });
+    assert.equal(result.response.status, 502);
+    const body = JSON.parse(await result.response.text());
+    assert.equal(body.error.code, "unexecuted_tool_intent");
     assert.equal(fs.readFileSync(stateFile, "utf8"), "2");
   } finally {
     if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;

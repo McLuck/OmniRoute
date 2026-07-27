@@ -40,6 +40,7 @@ test("devin agentic serializer preserves Anthropic tool history and schemas", ()
 
   assert.match(prompt.text, /\[System\]\nFollow CLAUDE\.md/);
   assert.match(prompt.text, /\[Tool\] Read/);
+  assert.match(prompt.text, /Do not execute tools inside Devin/);
   assert.match(prompt.text, /\[Assistant Tool Use\]/);
   assert.match(prompt.text, /\[Tool Result\]/);
   assert.equal(prompt.tools[0].name, "Read");

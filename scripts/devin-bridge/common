@@ -89,8 +89,8 @@ bridge_check_devin_auth() {
   output="$(bridge_run_devin auth status 2>&1)"
   exit_status=$?
   set -e
-  printf '%s\n' "$output"
   bridge_assert_devin_auth_status "$exit_status" "$output"
+  printf 'PASS: Devin authentication confirmed\n'
 }
 
 bridge_assert_zero_claude_egress() {

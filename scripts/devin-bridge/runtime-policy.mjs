@@ -23,7 +23,7 @@ export function validateDevinAuthStatus(exitStatus, output) {
   const lines = String(output)
     .split(/\r?\n/)
     .map((line) => line.trim());
-  if (!lines.includes("Logged in (via Devin)")) {
+  if (!lines.some((line) => /^Logged in \(via Devin\)\.?$/.test(line))) {
     return { ok: false, error: "auth status did not confirm login" };
   }
   if (lines.some((line) => /failed to fetch from server/i.test(line))) {
@@ -63,12 +63,22 @@ export function validateClaudeGuardDenials(text) {
 export function validateDevinGuardAudit(text) {
   const entries = parseAuditEntries(text);
   if (!entries.length) return { ok: false, error: "Devin egress audit has no records" };
+  let sawAllowedDevinRequest = false;
   for (const entry of entries) {
+    if (entry.decision === "deny") {
+      if (/anthropic|claude\.ai/i.test(normalizedHostname(entry.hostname))) {
+        return { ok: false, error: `forbidden Devin egress attempt: ${String(entry.hostname)}` };
+      }
+      continue;
+    }
     if (entry.decision !== "allow" || !isAllowedDevinAuditHostname(entry.hostname)) {
       return { ok: false, error: `unexpected Devin egress record: ${String(entry.hostname)}` };
     }
+    sawAllowedDevinRequest = true;
   }
-  return { ok: true };
+  return sawAllowedDevinRequest
+    ? { ok: true }
+    : { ok: false, error: "Devin egress audit has no approved request" };
 }
 
 export function validateAuditFileStat(stat, expectedUid) {

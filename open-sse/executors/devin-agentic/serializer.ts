@@ -158,6 +158,8 @@ function serializeToolCatalog(tools: AnthropicTool[]): string[] {
       "When a tool is required, respond with exactly one XML-wrapped JSON object:",
       '<tool>{"name":"ToolName","arguments":{}}</tool>',
       "Use only the tools listed below. Do not claim that a tool was executed.",
+      "Do not execute tools inside Devin or emit ACP tool-call events; request them only with the XML envelope.",
+      "Never describe a future tool action in plain text; emit the tool envelope instead.",
     ].join("\n"),
     ...tools.map((tool) =>
       [
