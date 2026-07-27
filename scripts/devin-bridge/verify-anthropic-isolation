@@ -35,9 +35,15 @@ node -e '
     throw new Error("Claude egress guard is not deny-all");
   }
   for (const guardName of ["network-guard", "claude-egress-guard"]) {
+    const guard = config.services[guardName];
     const env = config.services[guardName].environment;
     if (env.GUARD_ALLOW_SUFFIXES || env.GUARD_ALLOW_HOSTS) {
       throw new Error(`${guardName} exposes mutable host allowlists`);
+    }
+    if (!guard.healthcheck?.test) throw new Error(`${guardName} has no healthcheck`);
+    const auditMount = (guard.volumes || []).find((mount) => mount.target === "/guard-audit");
+    if (!auditMount || auditMount.type !== "bind" || !auditMount.source.includes("/.sandbox/guard-audit/")) {
+      throw new Error(`${guardName} does not use its guard-only audit bind`);
     }
   }
   const runtimeNames = ["omniroute", "claude", "contract", "omniroute-live", "claude-live"];
@@ -49,6 +55,9 @@ node -e '
   }
   for (const serviceName of runtimeNames) {
     const service = config.services[serviceName];
+    if ((service.volumes || []).some((mount) => mount.target === "/guard-audit")) {
+      throw new Error(`${serviceName} can mutate guard audit evidence`);
+    }
     const namedVolumes = (service.volumes || []).filter((mount) => mount.type === "volume");
     const hasClaudeConfig = namedVolumes.some(
       (mount) => mount.target === "/home/bridge/.claude-devin-isolated",
@@ -74,6 +83,14 @@ node -e '
       if (!String(service.environment[key] || "").startsWith("devin-cli-agentic/")) {
         throw new Error(`${serviceName} has a non-Devin model alias in ${key}`);
       }
+    }
+  }
+  if (config.services["omniroute-live"].depends_on["network-guard"].condition !== "service_healthy") {
+    throw new Error("omniroute-live does not wait for a healthy Devin guard");
+  }
+  for (const serviceName of ["claude", "claude-live"]) {
+    if (config.services[serviceName].depends_on["claude-egress-guard"].condition !== "service_healthy") {
+      throw new Error(`${serviceName} does not wait for a healthy Claude guard`);
     }
   }
   const liveEnv = config.services["omniroute-live"].environment;
@@ -167,6 +184,9 @@ fi
 if bridge_assert_devin_auth_status 0 $'Logged out\n' 2>/dev/null; then
   fail "logged-out auth fixture was accepted"
 fi
+if bridge_assert_devin_auth_status 0 $'Not Logged in (via Devin)\n' 2>/dev/null; then
+  fail "misleading auth fixture was accepted"
+fi
 selected_model="$(printf '%s' '{"models":[{"family_uid":"swe-1.7"},{"modelUid":"swe-1.7-lightning"}]}' | \
   node --import tsx/esm "$BRIDGE_ROOT/scripts/devin-bridge/select-live-model.mjs")"
 [[ "$selected_model" == swe-1-7-lightning ]] || fail "live model normalization or preference failed"
@@ -184,15 +204,14 @@ grep -q 'bridge_check_devin_auth' "$BRIDGE_ROOT/scripts/devin-bridge/test-live-d
   fail "live test bypasses strict auth status"
 grep -q 'bridge_check_devin_auth' "$BRIDGE_ROOT/scripts/devin-bridge/launch" || \
   fail "normal launch bypasses strict auth status"
-grep -q 'up -d network-guard claude-egress-guard' "$BRIDGE_ROOT/scripts/devin-bridge/launch" || \
+grep -q 'up -d --wait network-guard claude-egress-guard' "$BRIDGE_ROOT/scripts/devin-bridge/launch" || \
   fail "normal launch does not start the audited Claude egress guard"
+grep -qx '\.sandbox' "$BRIDGE_ROOT/.dockerignore" || fail ".sandbox is not excluded from builds"
 if [[ "${1:-}" == --static ]]; then printf 'PASS: static bridge isolation checks passed\n'; exit 0; fi
+trap bridge_cleanup_compose EXIT
+bridge_cleanup_compose
 bridge_reset_claude_egress_audit
-docker compose -f "$BRIDGE_COMPOSE" --profile offline up -d claude-egress-guard
-cleanup_claude_guard() {
-  docker compose -f "$BRIDGE_COMPOSE" --profile offline stop claude-egress-guard >/dev/null 2>&1 || true
-}
-trap cleanup_claude_guard EXIT
+docker compose -f "$BRIDGE_COMPOSE" --profile offline up -d --wait claude-egress-guard
 docker compose -f "$BRIDGE_COMPOSE" --profile offline run --rm --no-deps claude bash -ceu '
   test "$(id -u)" = 10001
   test "$HOME" = /home/bridge
@@ -231,9 +250,10 @@ docker compose -f "$BRIDGE_COMPOSE" --profile offline run --rm --no-deps claude 
     signal: AbortSignal.timeout(3000),
   }));
 '
-bridge_assert_claude_guard_denials "$BRIDGE_SANDBOX/evidence/claude-egress.jsonl" || \
+bridge_cleanup_compose
+bridge_assert_claude_guard_denials "$BRIDGE_CLAUDE_AUDIT" || \
   fail "Claude proxy denial audit proof failed"
-cleanup_claude_guard
+bridge_export_guard_audit "$BRIDGE_CLAUDE_AUDIT" claude-egress-verifier.jsonl
 trap - EXIT
 bridge_reset_claude_egress_audit
 printf 'PASS: runtime bridge isolation checks passed\n'

@@ -4,16 +4,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 
-import {
-  assertLocalAcpUrl,
-  buildDevinChildEnv,
-  DevinCliAgenticExecutor,
-} from "../../open-sse/executors/devin-cli-agentic.ts";
-import { devin_cli_agenticProvider } from "../../open-sse/config/providers/registry/devin-cli-agentic/index.ts";
-import { getProviderCredentials } from "../../src/sse/services/auth.ts";
+const isolatedRoot = path.join(process.cwd(), ".sandbox", "direct-acp-test");
+process.env.HOME = path.join(isolatedRoot, "home");
+process.env.DATA_DIR = path.join(isolatedRoot, "data");
+process.env.SQLITE_FILE = path.join(isolatedRoot, "data", "storage.sqlite");
+process.env.DEVIN_AGENTIC_HOME = process.env.HOME;
+fs.mkdirSync(process.env.HOME, { recursive: true });
+fs.mkdirSync(process.env.DATA_DIR, { recursive: true });
 
-process.env.DEVIN_AGENTIC_HOME = path.join(process.cwd(), ".sandbox", "unit-home");
-fs.mkdirSync(process.env.DEVIN_AGENTIC_HOME, { recursive: true });
+const { assertLocalAcpUrl, buildDevinChildEnv, DevinCliAgenticExecutor } =
+  await import("../../open-sse/executors/devin-cli-agentic.ts");
+const { devin_cli_agenticProvider } =
+  await import("../../open-sse/config/providers/registry/devin-cli-agentic/index.ts");
+const { getProviderCredentials } = await import("../../src/sse/services/auth.ts");
 
 async function readResponseText(response: Response) {
   return await response.text();

@@ -45,7 +45,11 @@ The `offline` network is internal, so no runtime container can reach the Interne
 `live-devin` OmniRoute service is also attached only to that internal network; outbound
 HTTP(S) goes through `network-guard`, whose only allowed suffixes are `.devin.ai` and
 `.cognition.ai`. Anthropic, Claude, Statsig, Sentry, and every unrelated destination are
-denied by default. The guard records decisions in `.sandbox/evidence/egress.jsonl`.
+denied by default. The guards write their canonical audit logs to the guard-only binds
+`.sandbox/guard-audit/devin/egress.jsonl` and
+`.sandbox/guard-audit/claude/egress.jsonl`. Runtime services do not mount those directories.
+After the guarded services stop, the scripts validate file ownership, mode, link count, and
+every audit decision before copying the token-free audit record into `.sandbox/evidence`.
 
 Run the executable proof at any time:
 
@@ -85,9 +89,10 @@ host session:
 ENABLE_LIVE_DEVIN_TESTS=1 ./scripts/devin-bridge/login-devin
 ```
 
-After login, the live test checks `devin auth status`, obtains the account's machine-readable
-model list with `devin models list --format json`, selects a returned model identifier, and
-runs three disposable Claude Code scenarios:
+After login, the live test accepts `devin auth status` only when its output contains the exact
+line `Logged in (via Devin)`. It then obtains the account's machine-readable model list with
+`devin models list --format json`, selects an identifier from an explicit model-identifier
+field, and runs three disposable Claude Code scenarios:
 
 ```bash
 ENABLE_LIVE_DEVIN_TESTS=1 ./scripts/devin-bridge/test-live-devin
@@ -126,7 +131,11 @@ the host.
   shows local routing and sanitized executor failures.
 - `.sandbox/evidence/mock-acp.jsonl` records deterministic offline provider actions.
 - `.sandbox/evidence/claude-stream.jsonl` records the real Claude Code offline run.
-- `.sandbox/evidence/egress.jsonl` records live guard decisions without tokens.
+- `.sandbox/guard-audit/devin/egress.jsonl` and
+  `.sandbox/guard-audit/claude/egress.jsonl` are the canonical guard-only audit files.
+- `.sandbox/evidence/egress.jsonl`, `.sandbox/evidence/claude-egress.jsonl`, and
+  `.sandbox/evidence/claude-egress-verifier.jsonl` are validated, post-shutdown copies
+  without tokens.
 - An ACP timeout, malformed frame, unavailable binary/model, or process exit is an explicit
   `502`; it never selects a second provider.
 

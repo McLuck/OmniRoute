@@ -73,7 +73,7 @@ services:
       omniroute:
         condition: service_healthy
       claude-egress-guard:
-        condition: service_started
+        condition: service_healthy
     working_dir: /workspace
     command: ["bash", "/opt/omniroute/docker/devin-bridge/run-claude-e2e.sh"]
     environment:
@@ -109,10 +109,21 @@ services:
     environment:
       GUARD_LISTEN: 0.0.0.0:8080
       GUARD_POLICY: deny-all
-      GUARD_LOG: /logs/claude-egress.jsonl
+      GUARD_LOG: /guard-audit/egress.jsonl
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').connect(8080,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 1s
+      retries: 15
     volumes:
       - ./network-guard:/guard:ro
-      - ../../.sandbox/evidence:/logs
+      - ../../.sandbox/guard-audit/claude:/guard-audit
     networks: [bridge-internal]
 
   network-guard:
@@ -126,17 +137,30 @@ services:
     environment:
       GUARD_LISTEN: 0.0.0.0:8080
       GUARD_POLICY: devin
-      GUARD_LOG: /logs/egress.jsonl
+      GUARD_LOG: /guard-audit/egress.jsonl
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').connect(8080,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 1s
+      timeout: 1s
+      retries: 15
     volumes:
       - ./network-guard:/guard:ro
-      - ../../.sandbox/evidence:/logs
+      - ../../.sandbox/guard-audit/devin:/guard-audit
     networks: [devin-guard-internal, guard-egress]
 
   omniroute-live:
     <<: *runtime
     profiles: [live-devin]
     hostname: omniroute
-    depends_on: [network-guard]
+    depends_on:
+      network-guard:
+        condition: service_healthy
     environment:
       <<: *isolated-environment
       CLI_DEVIN_AGENTIC_BIN: /usr/local/bin/devin
@@ -165,7 +189,7 @@ services:
       omniroute-live:
         condition: service_healthy
       claude-egress-guard:
-        condition: service_started
+        condition: service_healthy
     working_dir: /workspace
     command: ["bash", "/opt/omniroute/docker/devin-bridge/run-claude-live-e2e.sh"]
     environment:

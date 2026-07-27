@@ -3,17 +3,34 @@ set -euo pipefail
 BRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BRIDGE_COMPOSE="$BRIDGE_ROOT/docker/devin-bridge/compose.yml"
 BRIDGE_SANDBOX="$BRIDGE_ROOT/.sandbox"
+BRIDGE_GUARD_AUDIT_ROOT="$BRIDGE_SANDBOX/guard-audit"
+BRIDGE_CLAUDE_AUDIT="$BRIDGE_GUARD_AUDIT_ROOT/claude/egress.jsonl"
+BRIDGE_DEVIN_AUDIT="$BRIDGE_GUARD_AUDIT_ROOT/devin/egress.jsonl"
+BRIDGE_RUNTIME_POLICY="$BRIDGE_ROOT/scripts/devin-bridge/runtime-policy.mjs"
 bridge_prepare_sandbox() {
   mkdir -p "$BRIDGE_SANDBOX/home" "$BRIDGE_SANDBOX/test-data" \
     "$BRIDGE_SANDBOX/e2e-workspace" "$BRIDGE_SANDBOX/live-workspace" \
-    "$BRIDGE_SANDBOX/evidence"
+    "$BRIDGE_SANDBOX/evidence" "$BRIDGE_GUARD_AUDIT_ROOT/claude" \
+    "$BRIDGE_GUARD_AUDIT_ROOT/devin"
   chmod 0777 "$BRIDGE_SANDBOX/e2e-workspace" "$BRIDGE_SANDBOX/live-workspace" \
     "$BRIDGE_SANDBOX/evidence"
+  chmod 01777 "$BRIDGE_GUARD_AUDIT_ROOT/claude" "$BRIDGE_GUARD_AUDIT_ROOT/devin"
+}
+bridge_reset_guard_audit() {
+  local audit_path="$1"
+  local audit_dir
+  local temp_path
+  bridge_prepare_sandbox
+  audit_dir="$(dirname "$audit_path")"
+  temp_path="$(mktemp "$audit_dir/.egress.jsonl.XXXXXX")"
+  chmod 0666 "$temp_path"
+  mv -f "$temp_path" "$audit_path"
 }
 bridge_reset_claude_egress_audit() {
-  bridge_prepare_sandbox
-  : >"$BRIDGE_SANDBOX/evidence/claude-egress.jsonl"
-  chmod 0666 "$BRIDGE_SANDBOX/evidence/claude-egress.jsonl"
+  bridge_reset_guard_audit "$BRIDGE_CLAUDE_AUDIT"
+}
+bridge_reset_devin_egress_audit() {
+  bridge_reset_guard_audit "$BRIDGE_DEVIN_AUDIT"
 }
 bridge_reset_e2e_fixture() {
   bridge_prepare_sandbox
@@ -35,6 +52,7 @@ bridge_reset_live_fixture() {
     "$BRIDGE_SANDBOX/evidence/live-models.json" \
     "$BRIDGE_SANDBOX/evidence/egress.jsonl"
   bridge_reset_claude_egress_audit
+  bridge_reset_devin_egress_audit
 }
 bridge_test_env() {
   bridge_prepare_sandbox
@@ -55,18 +73,13 @@ bridge_run_devin() {
 bridge_assert_devin_auth_status() {
   local exit_status="$1"
   local output="$2"
-  [[ "$exit_status" == 0 ]] || {
-    printf 'FAIL: Devin auth status command failed\n' >&2
-    return 1
-  }
-  [[ "$output" == *"Logged in (via Devin)"* ]] || {
-    printf 'FAIL: Devin auth status did not confirm login\n' >&2
-    return 1
-  }
-  if grep -Fqi 'Failed to fetch from server' <<<"$output"; then
-    printf 'FAIL: Devin auth status could not confirm server access\n' >&2
-    return 1
-  fi
+  printf '%s' "$output" | node --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    import fs from "node:fs";
+    const policy = await import(pathToFileURL(process.argv[1]));
+    const result = policy.validateDevinAuthStatus(process.argv[2], fs.readFileSync(0, "utf8"));
+    if (!result.ok) throw new Error(result.error);
+  ' "$BRIDGE_RUNTIME_POLICY" "$exit_status"
 }
 
 bridge_check_devin_auth() {
@@ -82,34 +95,37 @@ bridge_check_devin_auth() {
 
 bridge_assert_zero_claude_egress() {
   local audit_path="$1"
-  [[ -f "$audit_path" ]] || {
-    printf 'FAIL: Claude egress audit file is missing\n' >&2
-    return 1
-  }
-  [[ ! -s "$audit_path" ]] || {
-    printf 'FAIL: Claude attempted external egress during the real run\n' >&2
-    return 1
-  }
+  bridge_validate_guard_audit claude-zero "$audit_path"
 }
 
 bridge_assert_claude_guard_denials() {
   local audit_path="$1"
-  [[ -s "$audit_path" ]] || {
-    printf 'FAIL: Claude egress denial audit is missing or empty\n' >&2
-    return 1
-  }
-  node -e '
-    const fs = require("node:fs");
-    const entries = fs.readFileSync(process.argv[1], "utf8")
-      .trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-    if (!entries.length) throw new Error("Claude egress audit has no records");
-    if (entries.some((entry) => entry.decision !== "deny")) {
-      throw new Error("Claude egress audit contains a non-deny decision");
-    }
-    for (const hostname of ["api.anthropic.com", "claude.ai"]) {
-      if (!entries.some((entry) => entry.hostname === hostname && entry.decision === "deny")) {
-        throw new Error(`Claude egress audit is missing deny for ${hostname}`);
-      }
-    }
-  ' "$audit_path"
+  bridge_validate_guard_audit claude-denials "$audit_path"
+}
+
+bridge_assert_devin_guard_audit() {
+  local audit_path="$1"
+  bridge_validate_guard_audit devin-allowed "$audit_path"
+}
+
+bridge_validate_guard_audit() {
+  local kind="$1"
+  local audit_path="$2"
+  node --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    const policy = await import(pathToFileURL(process.argv[1]));
+    policy.validateAuditFile(process.argv[2], process.argv[3], process.argv[4]);
+  ' "$BRIDGE_RUNTIME_POLICY" "$kind" "$audit_path" "$(id -u)"
+}
+
+bridge_export_guard_audit() {
+  local audit_path="$1"
+  local evidence_name="$2"
+  cp "$audit_path" "$BRIDGE_SANDBOX/evidence/$evidence_name"
+  chmod 0644 "$BRIDGE_SANDBOX/evidence/$evidence_name"
+}
+
+bridge_cleanup_compose() {
+  docker compose -f "$BRIDGE_COMPOSE" --profile offline --profile live-devin \
+    down --remove-orphans >/dev/null 2>&1 || true
 }
