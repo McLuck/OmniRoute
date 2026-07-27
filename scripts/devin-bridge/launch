@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${ENABLE_LIVE_DEVIN_TESTS:-}" != "1" && "${DEVIN_BRIDGE_OFFLINE:-}" != "1" ]]; then
+  printf 'Set DEVIN_BRIDGE_OFFLINE=1 for mock/offline mode or ENABLE_LIVE_DEVIN_TESTS=1 for live Devin.\n' >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$SCRIPT_DIR/verify-anthropic-isolation"
+
+printf 'Bridge launch preflight passed. Start Claude Code only inside the isolated container/profile.\n'
+

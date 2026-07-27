@@ -166,6 +166,7 @@ import { kilo_gatewayProvider } from "./registry/kilo-gateway/index.ts";
 import { bailian_coding_planProvider } from "./registry/bailian-coding-plan/index.ts";
 import { gigachatProvider } from "./registry/gigachat/index.ts";
 import { devin_cliProvider } from "./registry/devin-cli/index.ts";
+import { devin_cli_agenticProvider } from "./registry/devin-cli-agentic/index.ts";
 import { auggieProvider } from "./registry/auggie/index.ts";
 import { chutesProvider } from "./registry/chutes/index.ts";
 import { chenzkProvider } from "./registry/chenzk/index.ts";
@@ -384,6 +385,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   "bailian-coding-plan": bailian_coding_planProvider,
   gigachat: gigachatProvider,
   "devin-cli": devin_cliProvider,
+  "devin-cli-agentic": devin_cli_agenticProvider,
   auggie: auggieProvider,
   chutes: chutesProvider,
   chenzk: chenzkProvider,

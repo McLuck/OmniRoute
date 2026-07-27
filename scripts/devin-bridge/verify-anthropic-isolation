@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+
+case "${CLAUDE_CONFIG_DIR:-}" in
+  /home/bridge/.claude-devin-isolated|*/.sandbox/*|*/claude-devin-isolated*)
+    ;;
+  "")
+    fail "CLAUDE_CONFIG_DIR is not set"
+    ;;
+  *)
+    fail "CLAUDE_CONFIG_DIR must point at an isolated bridge directory"
+    ;;
+esac
+
+for key in \
+  ANTHROPIC_API_KEY \
+  CLAUDE_CODE_OAUTH_TOKEN \
+  ANTHROPIC_BEDROCK_BASE_URL \
+  ANTHROPIC_VERTEX_BASE_URL \
+  CLAUDE_CODE_USE_BEDROCK \
+  CLAUDE_CODE_USE_VERTEX \
+  CLAUDE_CODE_USE_FOUNDRY
+do
+  if [[ -n "${!key:-}" ]]; then
+    fail "$key must be unset"
+  fi
+done
+
+if [[ "${ANTHROPIC_BASE_URL:-}" != "http://omniroute:20128" && "${ANTHROPIC_BASE_URL:-}" != http://127.0.0.1:* && "${ANTHROPIC_BASE_URL:-}" != http://localhost:* ]]; then
+  fail "ANTHROPIC_BASE_URL must target local OmniRoute"
+fi
+
+if [[ "${ANTHROPIC_AUTH_TOKEN:-}" != sk-local-* ]]; then
+  fail "ANTHROPIC_AUTH_TOKEN must be a local bridge token"
+fi
+
+printf 'PASS: Anthropic isolation environment looks local and isolated\n'
+
