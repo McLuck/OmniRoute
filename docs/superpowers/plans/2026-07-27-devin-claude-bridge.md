@@ -106,3 +106,55 @@ npm test
 
 Expected in this workspace before installing dependencies: both commands fail with `ERR_MODULE_NOT_FOUND` for `tsx`. Expected after `npm install`: focused tests pass; `npm test` outcome must be reported from real output.
 
+### Task 5: Close Core Security And Protocol Gaps
+
+**Files:**
+- Modify: `open-sse/executors/devin-cli-agentic.ts`
+- Modify: `open-sse/executors/devin-agentic/*.ts`
+- Modify: `tests/unit/executor-devin-cli-agentic-*.test.ts`
+
+- [ ] **Prove environment allowlisting, response-id correlation, strict standalone tool envelopes, unique ids, bounded repair, size limits, cancellation cleanup, sanitized errors, and explicit `devin://acp/stdio` validation**
+
+Run with `HOME`, `DATA_DIR`, and `SQLITE_FILE` under `.sandbox`; expected: all focused tests pass and an outside-path test fails closed.
+
+### Task 6: Build Reproducible Containers And Network Guard
+
+**Files:**
+- Create: `docker/devin-bridge/Dockerfile`
+- Create: `docker/devin-bridge/compose.yml`
+- Create: `docker/devin-bridge/network-guard/*`
+- Create: `docker/devin-bridge/mock-devin/*`
+- Create: `.env.devin-bridge.example`
+
+- [ ] **Pin Claude Code 2.1.220 and Devin CLI 3000.2.17, create non-root offline/live profiles, separate auth/config volumes, explicit env allowlist, no host credential mounts, and denied-domain telemetry**
+
+Run: `docker compose -f docker/devin-bridge/compose.yml --profile offline config`; expected: no forbidden mounts/env inheritance and only internal runtime networks.
+
+### Task 7: Deliver Isolation And Operator Scripts
+
+**Files:**
+- Create/modify: `scripts/devin-bridge/{build,test-unit,test-contract,test-e2e-mock,verify-anthropic-isolation,login-devin,test-live-devin,launch,clean}`
+
+- [ ] **Make every command idempotent, sandbox-scoped, fail-closed, and secret-safe**
+
+Run: `./scripts/devin-bridge/verify-anthropic-isolation`; expected: positive offline proof passes and each deliberately removed guard returns non-zero.
+
+### Task 8: Real Claude Code Offline E2E
+
+**Files:**
+- Create: `tests/fixtures/devin-bridge/e2e-workspace/*`
+- Create: `tests/e2e/devin-claude-bridge.e2e.*`
+
+- [ ] **Run pinned Claude Code in the offline container through local `/v1/messages` and mock ACP, proving CLAUDE.md, skill, command, hook, Read/Edit/Bash, tests, multi-turn continuation, and no Anthropic traffic**
+
+Run: `./scripts/devin-bridge/test-e2e-mock`; expected: workspace diff and tests prove Claude Code executed tools while mock Devin only requested them.
+
+### Task 9: Regression, Documentation, Live Gate, And Delivery
+
+**Files:**
+- Modify: `docs/DEVIN_CLAUDE_BRIDGE.md`
+- Create: `docs/DEVIN_CLAUDE_BRIDGE_PROGRESS.md`
+
+- [ ] **Run focused suites, typecheck, lint, build, docs checks, offline E2E, and isolation proof with fresh output; then run live only after official in-container Devin login**
+
+If login is unavailable, record live as not tested and expose exactly `./scripts/devin-bridge/login-devin` followed by `./scripts/devin-bridge/test-live-devin`. Commit each reversible unit; do not merge or publish until all offline critical checks are green.

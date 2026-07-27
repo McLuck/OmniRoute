@@ -58,3 +58,24 @@ The bridge parses exactly one tool request per model turn, validates that the to
 
 Focused unit tests cover serialization, tool parsing, validation, Anthropic JSON, Anthropic SSE, malformed tool output, unknown tools, invalid arguments, image rejection, timeout, and spawn failure. Environment scripts provide an offline isolation verifier without reading host Claude credentials.
 
+## Mandatory Runtime Isolation
+
+The bridge runs only through `docker/devin-bridge/compose.yml`. The runtime image is non-root, uses a private `/home/bridge`, and mounts only this fork read-only plus a disposable workspace. It never mounts the host home, Docker socket, SSH, cloud credentials, or global Claude configuration. The container receives an explicit environment allowlist; the executor also constructs an allowlisted child environment instead of copying `process.env`.
+
+Build-time network access installs Claude Code `2.1.220` and Devin CLI `3000.2.17` with pinned integrity/checksum. Runtime profiles are separate: `offline` has `network_mode: none` for Claude plus an internal-only OmniRoute/mock network; `live-devin` has controlled egress through a DNS/proxy guard that denies Anthropic, Claude, Statsig, and Sentry domains and records attempted destinations. Devin authentication lives only in the named `devin-auth` volume. Claude configuration lives in a different named volume and is initialized empty.
+
+## Fail-Closed Routing
+
+`devin-cli-agentic` accepts only the synthetic `devin://acp/stdio` target and an explicit Devin binary path inside the container. It cannot use provider combos, auto routing, account fallback, fallback URLs, or an HTTP upstream. Model aliases resolve only to models returned by the Devin catalog or explicitly configured Devin model ids. An ACP failure, timeout, cancellation, invalid frame, unavailable model, or stopped sidecar becomes an Anthropic-shaped error response; no secondary provider is attempted.
+
+## Agentic Contract
+
+The serializer preserves request order, `system`, `tool_choice`, exact tool schemas, `text`, `tool_use`, `tool_result`, `thinking`, and `redacted_thinking`. It rejects unsupported blocks and caps large tool results with an explicit truncation marker and original size. The parser accepts exactly one standalone `<tool>` envelope, validates with Zod/JSON Schema infrastructure already present in OmniRoute, rejects unknown tools and mixed narrative/action output, and performs at most one bounded repair prompt. Tool ids combine a per-request nonce with canonical arguments so repeated identical calls remain unique while their association is stable within the turn.
+
+## Required Proof
+
+The offline profile must prove the ACP lifecycle, fragmented frames, stderr, early exit, hang/cancel, Anthropic JSON/SSE order, no fallback, and a real pinned Claude Code run that reads, edits, runs tests, observes `CLAUDE.md`, loads a skill and command, fires a hook, and completes at least one `tool_use -> tool_result -> continuation` loop. The isolation verifier checks env, mounts, UID, config paths, DNS/connection logs, local inference destination, selected provider, and fail-closed behavior. Live Devin remains unproved until official in-container login and three isolated agentic scenarios succeed.
+
+## Safety Incident During Baseline
+
+The first focused test was run without `DATA_DIR` isolation and initialized `/Users/lucasisrael/.omniroute/storage.sqlite`; logs reported schema-column additions. No Anthropic data was accessed. The external database will not be touched again or destructively rolled back. Every bridge command and test now must set `HOME`, `DATA_DIR`, `SQLITE_FILE`, and temporary directories inside `.sandbox`, and an automated guard must reject paths outside the task workspace.
