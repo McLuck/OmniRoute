@@ -4,11 +4,9 @@ source "$(dirname "$0")/common"
 bridge_prepare_sandbox
 "$(dirname "$0")/verify-anthropic-isolation"
 docker compose -f "$BRIDGE_COMPOSE" --profile offline --profile live-devin down --remove-orphans
-docker compose -f "$BRIDGE_COMPOSE" --profile live-devin up -d network-guard
-docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps omniroute-live \
-  devin auth status
-docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps omniroute-live \
-  devin models list --format json >"$BRIDGE_SANDBOX/evidence/live-models.json"
+docker compose -f "$BRIDGE_COMPOSE" --profile live-devin up -d network-guard claude-egress-guard
+bridge_check_devin_auth
+bridge_run_devin models list --format json >"$BRIDGE_SANDBOX/evidence/live-models.json"
 devin_model="$(node --import tsx/esm "$BRIDGE_ROOT/scripts/devin-bridge/select-live-model.mjs" \
   <"$BRIDGE_SANDBOX/evidence/live-models.json")"
 export DEVIN_BRIDGE_MODEL="devin-cli-agentic/$devin_model"

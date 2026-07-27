@@ -1,18 +1,18 @@
 import http from "node:http";
 import net from "node:net";
 import fs from "node:fs";
+import { isAllowedGuardHostname } from "./policy.mjs";
 
 const [host, portText] = (process.env.GUARD_LISTEN || "0.0.0.0:8080").split(":");
 const port = Number(portText);
-const suffixes = (process.env.GUARD_ALLOW_SUFFIXES || "")
-  .split(",")
-  .map((value) => value.trim().toLowerCase())
-  .filter(Boolean);
+const policy = process.env.GUARD_POLICY || "deny-all";
+if (!new Set(["deny-all", "devin"]).has(policy)) {
+  throw new Error(`Unknown network guard policy: ${policy}`);
+}
 const logPath = process.env.GUARD_LOG || "/tmp/egress.jsonl";
 
 function allowed(hostname) {
-  const value = hostname.toLowerCase().replace(/\.$/, "");
-  return suffixes.some((suffix) => value === suffix.slice(1) || value.endsWith(suffix));
+  return isAllowedGuardHostname(hostname, policy);
 }
 
 function audit(hostname, decision) {

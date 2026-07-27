@@ -27,9 +27,49 @@ bridge_reset_live_fixture() {
     "$BRIDGE_SANDBOX/evidence/live-fix.jsonl" \
     "$BRIDGE_SANDBOX/evidence/live-command.jsonl" \
     "$BRIDGE_SANDBOX/evidence/live-models.json" \
-    "$BRIDGE_SANDBOX/evidence/egress.jsonl"
+    "$BRIDGE_SANDBOX/evidence/egress.jsonl" \
+    "$BRIDGE_SANDBOX/evidence/claude-egress.jsonl"
 }
 bridge_test_env() {
   bridge_prepare_sandbox
   env HOME="$BRIDGE_SANDBOX/home" DATA_DIR="$BRIDGE_SANDBOX/test-data" SQLITE_FILE="$BRIDGE_SANDBOX/test-data/storage.sqlite" DEVIN_AGENTIC_HOME="$BRIDGE_SANDBOX/home" "$@"
+}
+
+bridge_run_devin() {
+  docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps \
+    omniroute-live sh -ceu '
+      trusted_proxy=http://network-guard:8080
+      test "${DEVIN_BRIDGE_PROXY_URL:-}" = "$trusted_proxy"
+      export HTTP_PROXY="$trusted_proxy" HTTPS_PROXY="$trusted_proxy"
+      unset ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+      exec devin "$@"
+    ' bridge-devin "$@"
+}
+
+bridge_assert_devin_auth_status() {
+  local exit_status="$1"
+  local output="$2"
+  [[ "$exit_status" == 0 ]] || {
+    printf 'FAIL: Devin auth status command failed\n' >&2
+    return 1
+  }
+  [[ "$output" == *"Logged in (via Devin)"* ]] || {
+    printf 'FAIL: Devin auth status did not confirm login\n' >&2
+    return 1
+  }
+  if grep -Fqi 'Failed to fetch from server' <<<"$output"; then
+    printf 'FAIL: Devin auth status could not confirm server access\n' >&2
+    return 1
+  fi
+}
+
+bridge_check_devin_auth() {
+  local output
+  local exit_status
+  set +e
+  output="$(bridge_run_devin auth status 2>&1)"
+  exit_status=$?
+  set -e
+  printf '%s\n' "$output"
+  bridge_assert_devin_auth_status "$exit_status" "$output"
 }

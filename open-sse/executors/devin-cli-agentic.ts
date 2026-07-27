@@ -26,6 +26,7 @@ type AcpMessage = {
 
 const ACP_PROTOCOL_VERSION = 1;
 const MAX_ACP_OUTPUT_CHARS = 1024 * 1024;
+const TRUSTED_DEVIN_BRIDGE_PROXY_URL = "http://network-guard:8080";
 const REPAIRABLE_TOOL_ERRORS = new Set([
   "invalid_tool_json",
   "missing_tool_name",
@@ -112,6 +113,10 @@ export function buildDevinChildEnv(
   if (source.TERM) env.TERM = source.TERM;
   if (source.DEVIN_BRIDGE_MOCK_LOG === "/evidence/mock-acp.jsonl") {
     env.DEVIN_BRIDGE_MOCK_LOG = source.DEVIN_BRIDGE_MOCK_LOG;
+  }
+  if (source.DEVIN_BRIDGE_PROXY_URL === TRUSTED_DEVIN_BRIDGE_PROXY_URL) {
+    env.HTTP_PROXY = TRUSTED_DEVIN_BRIDGE_PROXY_URL;
+    env.HTTPS_PROXY = TRUSTED_DEVIN_BRIDGE_PROXY_URL;
   }
 
   for (const key of CLAUDE_ENV_BLOCKLIST) delete env[key];

@@ -4,6 +4,25 @@ import { DEVIN_MODEL_CATALOG } from "../../open-sse/config/providers/registry/de
 
 const document = JSON.parse(fs.readFileSync(0, "utf8"));
 const candidates = [];
+const candidateFields = new Set([
+  "id",
+  "model",
+  "model_id",
+  "modelid",
+  "model_uid",
+  "modeluid",
+  "family_uid",
+  "familyuid",
+  "slug",
+]);
+
+function normalizeModelId(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 function collect(value) {
   if (Array.isArray(value)) {
@@ -14,7 +33,7 @@ function collect(value) {
   for (const [key, nested] of Object.entries(value)) {
     if (
       typeof nested === "string" &&
-      ["id", "model", "model_id", "slug"].includes(key.toLowerCase()) &&
+      candidateFields.has(key.toLowerCase()) &&
       /^[a-z0-9][a-z0-9._/-]*$/i.test(nested)
     ) {
       candidates.push(nested);
@@ -26,7 +45,13 @@ function collect(value) {
 collect(document);
 const unique = [...new Set(candidates)];
 const catalogIds = new Set(DEVIN_MODEL_CATALOG.map((entry) => entry.id));
-const available = unique.filter((candidate) => catalogIds.has(candidate));
+const available = [
+  ...new Set(
+    unique
+      .map((candidate) => normalizeModelId(candidate))
+      .filter((candidate) => catalogIds.has(candidate))
+  ),
+];
 
 for (const [name, configured] of [
   ["DEVIN_BRIDGE_SONNET_MODEL", process.env.DEVIN_BRIDGE_SONNET_MODEL],
@@ -43,6 +68,7 @@ for (const [name, configured] of [
 }
 
 const selected =
+  available.find((candidate) => candidate === "swe-1-7-lightning") ||
   available.find((candidate) => candidate === "swe-1-7") ||
   available.find((candidate) => /swe|claude|gpt|gemini/i.test(candidate)) ||
   available[0];

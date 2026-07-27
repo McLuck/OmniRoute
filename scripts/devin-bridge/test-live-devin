@@ -6,10 +6,8 @@ bridge_reset_live_fixture
 "$(dirname "$0")/verify-anthropic-isolation" --static
 docker compose -f "$BRIDGE_COMPOSE" --profile offline --profile live-devin down --remove-orphans
 docker compose -f "$BRIDGE_COMPOSE" --profile live-devin up -d network-guard
-docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps omniroute-live \
-  devin auth status
-docker compose -f "$BRIDGE_COMPOSE" --profile live-devin run --rm --no-deps omniroute-live \
-  devin models list --format json >"$BRIDGE_SANDBOX/evidence/live-models.json"
+bridge_check_devin_auth
+bridge_run_devin models list --format json >"$BRIDGE_SANDBOX/evidence/live-models.json"
 devin_model="$(node --import tsx/esm "$BRIDGE_ROOT/scripts/devin-bridge/select-live-model.mjs" \
   <"$BRIDGE_SANDBOX/evidence/live-models.json")"
 export DEVIN_BRIDGE_MODEL="devin-cli-agentic/$devin_model"
@@ -24,9 +22,22 @@ node -e '
   if (!fs.existsSync(path)) process.exit(0);
   for (const line of fs.readFileSync(path, "utf8").trim().split("\n").filter(Boolean)) {
     const entry = JSON.parse(line);
-    if (entry.decision === "allow" && !/(^|\.)(devin\.ai|cognition\.ai)$/.test(entry.hostname)) {
+    const suffixAllowed = /(^|\.)(devin\.ai|cognition\.ai)$/.test(entry.hostname);
+    const exactAllowed = ["server.codeium.com", "unleash.codeium.com"].includes(entry.hostname);
+    if (entry.decision === "allow" && !suffixAllowed && !exactAllowed) {
       throw new Error(`unexpected allowed egress: ${entry.hostname}`);
     }
   }
 ' "$BRIDGE_SANDBOX/evidence/egress.jsonl"
+node -e '
+  const fs = require("node:fs");
+  const path = process.argv[1];
+  if (!fs.existsSync(path)) process.exit(0);
+  for (const line of fs.readFileSync(path, "utf8").trim().split("\n").filter(Boolean)) {
+    const entry = JSON.parse(line);
+    if (entry.decision === "allow") {
+      throw new Error(`Claude guard allowed egress: ${entry.hostname}`);
+    }
+  }
+' "$BRIDGE_SANDBOX/evidence/claude-egress.jsonl"
 printf 'PASS: live model %s was discovered and validated by three scenarios\n' "$devin_model"
