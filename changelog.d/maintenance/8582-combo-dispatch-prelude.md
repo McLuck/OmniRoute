@@ -1,0 +1,1 @@
+- **refactor(sse):** extract combo dispatch prelude (pin/fusion/pipeline/runtime-unit short-circuits) into `combo/dispatchPrelude.ts` — pure move, no behaviour change; #3501 god-file decomposition ([#8582](https://github.com/diegosouzapw/OmniRoute/pull/8582)) — thanks @MumuTW
