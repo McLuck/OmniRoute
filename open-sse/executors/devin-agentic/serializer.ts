@@ -5,11 +5,21 @@ import {
   type AnthropicTool,
   type DevinPrompt,
 } from "./types.ts";
+import { createHash } from "node:crypto";
+
+export const MAX_TOOL_RESULT_CHARS = 65536;
 
 function stringifyContentValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (value == null) return "";
   return JSON.stringify(value);
+}
+
+function boundedToolResult(value: unknown): string {
+  const text = stringifyContentValue(value);
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
+  const removed = text.length - MAX_TOOL_RESULT_CHARS;
+  return `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n[TRUNCATED ${removed} CHARACTERS BY OMNIROUTE]`;
 }
 
 function serializeSystem(system: unknown): string[] {
@@ -31,7 +41,11 @@ function serializeSystem(system: unknown): string[] {
   return parts.length > 0 ? [`[System]\n${parts.join("\n")}`] : [];
 }
 
-function serializeBlock(block: unknown): string {
+function serializeBlock(
+  block: unknown,
+  knownToolUses: Set<string>,
+  tools: AnthropicTool[]
+): string {
   const record = asRecord(block);
   const type = String(record.type || "");
 
@@ -39,21 +53,44 @@ function serializeBlock(block: unknown): string {
   if (type === "thinking") return `[Thinking]\n${String(record.thinking || "")}`;
   if (type === "redacted_thinking") return "[Redacted Thinking]";
   if (type === "tool_use") {
+    const id = String(record.id || "").trim();
+    const name = String(record.name || "").trim();
+    if (!id || knownToolUses.has(id)) {
+      throw new DevinAgenticBridgeError(
+        id ? `Duplicate Anthropic tool_use id: ${id}` : "Anthropic tool_use is missing id",
+        id ? "duplicate_tool_use_id" : "missing_tool_use_id"
+      );
+    }
+    const declared = tools.find((tool) => tool.name === name);
+    if (!declared) {
+      throw new DevinAgenticBridgeError(
+        `Historical tool_use references undeclared tool: ${name || "unknown"}`,
+        "undeclared_historical_tool"
+      );
+    }
+    knownToolUses.add(id);
     return [
       "[Assistant Tool Use]",
-      `id: ${String(record.id || "")}`,
-      `name: ${String(record.name || "")}`,
+      `id: ${id}`,
+      `name: ${name}`,
       "arguments:",
       JSON.stringify(record.input || {}, null, 2),
     ].join("\n");
   }
   if (type === "tool_result") {
+    const toolUseId = String(record.tool_use_id || "").trim();
+    if (!toolUseId || !knownToolUses.has(toolUseId)) {
+      throw new DevinAgenticBridgeError(
+        `Anthropic tool_result references unknown tool_use id: ${toolUseId || "missing"}`,
+        "orphan_tool_result"
+      );
+    }
     return [
       "[Tool Result]",
-      `tool_use_id: ${String(record.tool_use_id || "")}`,
+      `tool_use_id: ${toolUseId}`,
       `is_error: ${record.is_error === true ? "true" : "false"}`,
       "content:",
-      stringifyContentValue(record.content),
+      boundedToolResult(record.content),
     ].join("\n");
   }
   if (type === "image") {
@@ -69,16 +106,28 @@ function serializeBlock(block: unknown): string {
   );
 }
 
-function serializeMessage(message: unknown): string {
+function serializeMessage(
+  message: unknown,
+  knownToolUses: Set<string>,
+  tools: AnthropicTool[]
+): string {
   const record = asRecord(message);
   const role = String(record.role || "user");
+  if (role !== "user" && role !== "assistant") {
+    throw new DevinAgenticBridgeError(
+      `Unsupported Anthropic message role: ${role}`,
+      "unsupported_role"
+    );
+  }
   const label = role === "assistant" ? "Assistant" : role === "system" ? "System" : "User";
   const content = record.content;
 
   if (typeof content === "string") return `[${label}]\n${content}`;
   if (!Array.isArray(content)) return `[${label}]\n${stringifyContentValue(content)}`;
 
-  return `[${label}]\n${content.map((block) => serializeBlock(block)).join("\n\n")}`;
+  return `[${label}]\n${content
+    .map((block) => serializeBlock(block, knownToolUses, tools))
+    .join("\n\n")}`;
 }
 
 function normalizeTools(tools: unknown): AnthropicTool[] {
@@ -121,14 +170,39 @@ function serializeToolCatalog(tools: AnthropicTool[]): string[] {
   ];
 }
 
+function serializeToolChoice(value: unknown, tools: AnthropicTool[]): string[] {
+  if (value == null) return [];
+  const choice = asRecord(value);
+  const type = String(choice.type || "");
+  if (type === "auto") return ["[Tool Choice]\nauto"];
+  if (type === "any") return ["[Tool Choice]\nA tool call is required."];
+  if (type === "none") return ["[Tool Choice]\nDo not call a tool."];
+  if (type === "tool") {
+    const name = String(choice.name || "").trim();
+    if (!tools.some((tool) => tool.name === name)) {
+      throw new DevinAgenticBridgeError(
+        `tool_choice references unknown tool: ${name}`,
+        "invalid_tool_choice"
+      );
+    }
+    return [`[Tool Choice]\nCall exactly this tool: ${name}`];
+  }
+  throw new DevinAgenticBridgeError(
+    `Unsupported Anthropic tool_choice type: ${type || "missing"}`,
+    "invalid_tool_choice"
+  );
+}
+
 export function serializeAnthropicForDevin(body: unknown): DevinPrompt {
   const record = asRecord(body);
   const messages = Array.isArray(record.messages) ? record.messages : [];
   const tools = normalizeTools(record.tools);
+  const knownToolUses = new Set<string>();
   const sections: string[] = [
     ...serializeSystem(record.system),
     ...serializeToolCatalog(tools),
-    ...messages.map((message) => serializeMessage(message)),
+    ...serializeToolChoice(record.tool_choice, tools),
+    ...messages.map((message) => serializeMessage(message, knownToolUses, tools)),
   ].filter((section) => section.trim().length > 0);
 
   if (sections.length === 0) {
@@ -136,5 +210,6 @@ export function serializeAnthropicForDevin(body: unknown): DevinPrompt {
   }
 
   const text = sections.join("\n\n---\n\n");
-  return { text, tools, inputTokensEstimate: estimateTokens(text) };
+  const idSeed = createHash("sha256").update(text).digest("hex").slice(0, 24);
+  return { text, tools, inputTokensEstimate: estimateTokens(text), idSeed };
 }

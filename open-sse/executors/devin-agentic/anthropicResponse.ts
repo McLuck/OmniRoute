@@ -1,4 +1,9 @@
-import { estimateTokens, type ClaudeResponseArgs, type ClaudeToolUseArgs, type JsonRecord } from "./types.ts";
+import {
+  estimateTokens,
+  type ClaudeResponseArgs,
+  type ClaudeToolUseArgs,
+  type JsonRecord,
+} from "./types.ts";
 
 function usage(inputTokens: number, outputTokens: number) {
   return {
@@ -97,4 +102,3 @@ export function buildClaudeSseFrames(message: JsonRecord): string {
   out += frame("message_stop", { type: "message_stop" });
   return out;
 }
-

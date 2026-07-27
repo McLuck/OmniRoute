@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 
@@ -10,11 +9,20 @@ import {
   buildDevinChildEnv,
   DevinCliAgenticExecutor,
 } from "../../open-sse/executors/devin-cli-agentic.ts";
+import { devin_cli_agenticProvider } from "../../open-sse/config/providers/registry/devin-cli-agentic/index.ts";
+import { getProviderCredentials } from "../../src/sse/services/auth.ts";
 
 process.env.DEVIN_AGENTIC_HOME = path.join(process.cwd(), ".sandbox", "unit-home");
+fs.mkdirSync(process.env.DEVIN_AGENTIC_HOME, { recursive: true });
 
 async function readResponseText(response: Response) {
   return await response.text();
+}
+
+function sandboxTmp(prefix: string) {
+  const root = path.join(process.cwd(), ".sandbox", "unit-processes");
+  fs.mkdirSync(root, { recursive: true });
+  return fs.mkdtempSync(path.join(root, prefix));
 }
 
 test("Devin child environment is allowlisted and requires an isolated home", () => {
@@ -28,6 +36,7 @@ test("Devin child environment is allowlisted and requires an isolated home", () 
       AWS_ACCESS_KEY_ID: "must-not-leak",
       GITHUB_TOKEN: "must-not-leak",
       DEVIN_AGENTIC_HOME: isolatedHome,
+      DEVIN_BRIDGE_MOCK_LOG: "/evidence/mock-acp.jsonl",
     }
   );
 
@@ -37,6 +46,18 @@ test("Devin child environment is allowlisted and requires an isolated home", () 
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
   assert.equal(env.AWS_ACCESS_KEY_ID, undefined);
   assert.equal(env.GITHUB_TOKEN, undefined);
+  assert.equal(env.DEVIN_BRIDGE_MOCK_LOG, "/evidence/mock-acp.jsonl");
+  assert.equal(
+    buildDevinChildEnv(
+      {},
+      {
+        PATH: "/usr/bin",
+        DEVIN_AGENTIC_HOME: isolatedHome,
+        DEVIN_BRIDGE_MOCK_LOG: "/tmp/unsafe.jsonl",
+      }
+    ).DEVIN_BRIDGE_MOCK_LOG,
+    undefined
+  );
   assert.throws(
     () => buildDevinChildEnv({}, { PATH: "/usr/bin", DEVIN_AGENTIC_HOME: "/tmp/outside" }),
     /inside the bridge sandbox/
@@ -49,13 +70,27 @@ test("Devin agentic upstream is fixed to local ACP stdio", () => {
   assert.throws(() => assertLocalAcpUrl("http://localhost:9999"), /ACP stdio/);
 });
 
+test("Devin agentic provider delegates auth only to the isolated CLI", () => {
+  assert.equal(devin_cli_agenticProvider.authType, "none");
+  assert.equal(devin_cli_agenticProvider.baseUrl, "devin://acp/stdio");
+  assert.equal(devin_cli_agenticProvider.baseUrls, undefined);
+});
+
+test("Devin agentic provider resolves synthetic no-auth credentials without a DB row", async () => {
+  const credentials = await getProviderCredentials("devin-cli-agentic");
+  assert.equal(credentials?.connectionId, "noauth");
+  assert.equal(credentials?.apiKey, null);
+});
+
 function writeMockDevin(tmpDir: string, responseText: string) {
   const framesFile = path.join(tmpDir, "frames.json");
-  const scriptFile = path.join(tmpDir, "mock-devin");
+  const argsFile = path.join(tmpDir, "args.json");
+  const scriptFile = path.join(tmpDir, "mock-devin.cjs");
   const script = `#!/usr/bin/env node
 const fs = require("fs");
 const readline = require("readline");
 const frames = [];
+fs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   if (!line.trim()) return;
@@ -63,7 +98,7 @@ rl.on("line", (line) => {
   frames.push(msg);
   fs.writeFileSync(${JSON.stringify(framesFile)}, JSON.stringify(frames, null, 2));
   if (msg.method === "initialize") {
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
   } else if (msg.method === "session/new") {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess_agentic" } }) + "\\n");
   } else if (msg.method === "session/prompt") {
@@ -77,13 +112,45 @@ rl.on("line", (line) => {
 });
 `;
   writeFileSync(scriptFile, script, { mode: 0o755 });
-  return { scriptFile, framesFile };
+  return { scriptFile, framesFile, argsFile };
+}
+
+function writeScenarioMock(tmpDir: string, body: string) {
+  const scriptFile = path.join(tmpDir, "mock-devin.cjs");
+  writeFileSync(
+    scriptFile,
+    `#!/usr/bin/env node
+const readline = require("readline");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+${body}
+`,
+    { mode: 0o755 }
+  );
+  return scriptFile;
+}
+
+async function executeTextRequest(scriptFile: string, signal?: AbortSignal) {
+  const oldBin = process.env.CLI_DEVIN_AGENTIC_BIN;
+  process.env.CLI_DEVIN_AGENTIC_BIN = scriptFile;
+  try {
+    return await new DevinCliAgenticExecutor().execute({
+      model: "swe-1-7",
+      stream: false,
+      credentials: {},
+      signal,
+      body: { messages: [{ role: "user", content: "Say hello" }] },
+    });
+  } finally {
+    if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
+    else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;
+  }
 }
 
 test("DevinCliAgenticExecutor returns Anthropic tool_use JSON and sends ACP frames", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devin-agentic-"));
+  const tmpDir = sandboxTmp("devin-agentic-");
   const oldBin = process.env.CLI_DEVIN_AGENTIC_BIN;
-  const { scriptFile, framesFile } = writeMockDevin(
+  const { scriptFile, framesFile, argsFile } = writeMockDevin(
     tmpDir,
     '<tool>{"name":"Read","arguments":{"file_path":"src/index.ts"}}</tool>'
   );
@@ -111,7 +178,7 @@ test("DevinCliAgenticExecutor returns Anthropic tool_use JSON and sends ACP fram
       },
     });
 
-    assert.equal(result.response.status, 200);
+    assert.equal(result.response.status, 200, await result.response.clone().text());
     const json = JSON.parse(await readResponseText(result.response));
     assert.equal(json.stop_reason, "tool_use");
     assert.equal(json.content[0].type, "tool_use");
@@ -122,6 +189,14 @@ test("DevinCliAgenticExecutor returns Anthropic tool_use JSON and sends ACP fram
     assert.ok(frames.some((frame: { method?: string }) => frame.method === "initialize"));
     assert.ok(frames.some((frame: { method?: string }) => frame.method === "session/new"));
     assert.ok(frames.some((frame: { method?: string }) => frame.method === "session/prompt"));
+    const initialize = frames.find((frame: { method?: string }) => frame.method === "initialize");
+    assert.equal(initialize.params.protocolVersion, 1);
+    assert.deepEqual(initialize.params.clientCapabilities, {});
+    assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), [
+      "acp",
+      "--agent-type",
+      "summarizer",
+    ]);
   } finally {
     if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
     else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;
@@ -130,7 +205,7 @@ test("DevinCliAgenticExecutor returns Anthropic tool_use JSON and sends ACP fram
 });
 
 test("DevinCliAgenticExecutor returns Anthropic SSE for streaming Claude clients", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devin-agentic-sse-"));
+  const tmpDir = sandboxTmp("devin-agentic-sse-");
   const oldBin = process.env.CLI_DEVIN_AGENTIC_BIN;
   const { scriptFile } = writeMockDevin(tmpDir, "Done");
   process.env.CLI_DEVIN_AGENTIC_BIN = scriptFile;
@@ -144,12 +219,150 @@ test("DevinCliAgenticExecutor returns Anthropic SSE for streaming Claude clients
       body: { messages: [{ role: "user", content: [{ type: "text", text: "Say done" }] }] },
     });
 
-    assert.equal(result.response.status, 200);
+    assert.equal(result.response.status, 200, await result.response.clone().text());
     const sse = await readResponseText(result.response);
     assert.match(sse, /event: message_start/);
     assert.match(sse, /event: content_block_delta/);
     assert.match(sse, /Done/);
     assert.match(sse, /event: message_stop/);
+  } finally {
+    if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
+    else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("ACP client handles fragmented frames, multiple chunks, and stderr", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-fragmented-");
+  const scriptFile = writeScenarioMock(
+    tmpDir,
+    `rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "fragmented" } });
+  if (msg.method === "session/prompt") {
+    process.stderr.write("bounded diagnostic\\n");
+    const first = JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fragmented", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hel" } } } });
+    process.stdout.write(first.slice(0, 13));
+    setTimeout(() => {
+      process.stdout.write(first.slice(13) + "\\n");
+      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fragmented", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "lo" } } } });
+      send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+    }, 10);
+  }
+});`
+  );
+  try {
+    const result = await executeTextRequest(scriptFile);
+    assert.equal(result.response.status, 200, await result.response.clone().text());
+    const body = JSON.parse(await result.response.text());
+    assert.equal(body.content[0].text, "Hello");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("ACP client fails closed on protocol errors and early exit", async () => {
+  const cases = [
+    {
+      name: "invalid-frame",
+      code: "invalid_acp_frame",
+      body: `rl.on("line", () => process.stdout.write("not-json\\n"));`,
+    },
+    {
+      name: "rpc-error",
+      code: "acp_error",
+      body: `rl.on("line", (line) => { const msg = JSON.parse(line); send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "bad request" } }); });`,
+    },
+    {
+      name: "early-exit",
+      code: "acp_early_exit",
+      body: `rl.on("line", () => process.exit(7));`,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const tmpDir = sandboxTmp(`devin-agentic-${scenario.name}-`);
+    try {
+      const result = await executeTextRequest(writeScenarioMock(tmpDir, scenario.body));
+      assert.equal(result.response.status, 502, scenario.name);
+      const body = JSON.parse(await result.response.text());
+      assert.equal(body.error.code, scenario.code, scenario.name);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("ACP client times out, cancels, and terminates a stuck process", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-stuck-");
+  const scriptFile = writeScenarioMock(tmpDir, `rl.on("line", () => {});`);
+  const oldTimeout = process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS;
+  try {
+    process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS = "80";
+    const timeoutResult = await executeTextRequest(scriptFile);
+    assert.equal(timeoutResult.response.status, 504);
+    assert.equal(JSON.parse(await timeoutResult.response.text()).error.code, "acp_timeout");
+
+    process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS = "1000";
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30);
+    const cancelled = await executeTextRequest(scriptFile, controller.signal);
+    assert.equal(cancelled.response.status, 499);
+    assert.equal(JSON.parse(await cancelled.response.text()).error.code, "acp_cancelled");
+  } finally {
+    if (oldTimeout === undefined) delete process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS;
+    else process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS = oldTimeout;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("tool repair is attempted once and produces a validated tool_use", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-repair-");
+  const stateFile = path.join(tmpDir, "spawn-count");
+  const scriptFile = writeScenarioMock(
+    tmpDir,
+    `const fs = require("fs");
+const stateFile = ${JSON.stringify(stateFile)};
+const count = Number(fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf8") : "0") + 1;
+fs.writeFileSync(stateFile, String(count));
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "repair" } });
+  if (msg.method === "session/prompt") {
+    const text = count === 1
+      ? 'I will read it. <tool>{"name":"Read","arguments":{"file_path":"a.ts"}}</tool>'
+      : '<tool>{"name":"Read","arguments":{"file_path":"a.ts"}}</tool>';
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "repair", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+  }
+});`
+  );
+  const oldBin = process.env.CLI_DEVIN_AGENTIC_BIN;
+  process.env.CLI_DEVIN_AGENTIC_BIN = scriptFile;
+  try {
+    const result = await new DevinCliAgenticExecutor().execute({
+      model: "swe-1-7",
+      stream: false,
+      credentials: {},
+      body: {
+        tools: [
+          {
+            name: "Read",
+            input_schema: {
+              type: "object",
+              required: ["file_path"],
+              properties: { file_path: { type: "string" } },
+            },
+          },
+        ],
+        messages: [{ role: "user", content: "Read a.ts" }],
+      },
+    });
+    assert.equal(result.response.status, 200, await result.response.clone().text());
+    assert.equal(JSON.parse(await result.response.text()).stop_reason, "tool_use");
+    assert.equal(fs.readFileSync(stateFile, "utf8"), "2");
   } finally {
     if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
     else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;

@@ -66,7 +66,7 @@ function validateSchema(value: unknown, schema: JsonRecord, path: string): strin
   return errors;
 }
 
-export function parseDevinToolRequest(text: string, tools: AnthropicTool[]) {
+export function parseDevinToolRequest(text: string, tools: AnthropicTool[], idSeed = "") {
   const matches = [...text.matchAll(/<tool>\s*([\s\S]*?)\s*<\/tool>/g)];
   if (matches.length === 0) return null;
   if (matches.length > 1) {
@@ -110,7 +110,7 @@ export function parseDevinToolRequest(text: string, tools: AnthropicTool[]) {
   }
 
   const digest = createHash("sha256")
-    .update(`${name}:${stableJson(input)}`)
+    .update(`${idSeed}:${name}:${stableJson(input)}`)
     .digest("hex")
     .slice(0, 16);
   return { id: `tool_devin_${digest}`, name, input };

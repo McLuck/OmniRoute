@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { BaseExecutor, type ExecuteInput } from "./base.ts";
+import { DEVIN_MODEL_CATALOG } from "../config/providers/registry/devin/catalog.ts";
+import { buildErrorBody, sanitizeErrorMessage } from "../utils/error.ts";
 import {
   buildClaudeSseFrames,
   buildClaudeTextResponse,
@@ -20,6 +23,17 @@ type AcpMessage = {
   result?: unknown;
   error?: { code: number; message: string };
 };
+
+const ACP_PROTOCOL_VERSION = 1;
+const MAX_ACP_OUTPUT_CHARS = 1024 * 1024;
+const REPAIRABLE_TOOL_ERRORS = new Set([
+  "invalid_tool_json",
+  "missing_tool_name",
+  "unknown_tool",
+  "invalid_tool_arguments",
+  "multiple_tool_requests",
+  "mixed_tool_narrative",
+]);
 
 const CLAUDE_ENV_BLOCKLIST = [
   "ANTHROPIC_API_KEY",
@@ -96,6 +110,9 @@ export function buildDevinChildEnv(
   };
   if (source.LC_ALL) env.LC_ALL = source.LC_ALL;
   if (source.TERM) env.TERM = source.TERM;
+  if (source.DEVIN_BRIDGE_MOCK_LOG === "/evidence/mock-acp.jsonl") {
+    env.DEVIN_BRIDGE_MOCK_LOG = source.DEVIN_BRIDGE_MOCK_LOG;
+  }
 
   for (const key of CLAUDE_ENV_BLOCKLIST) delete env[key];
   return env;
@@ -103,16 +120,15 @@ export function buildDevinChildEnv(
 
 function errorBody(error: unknown) {
   const bridge = error instanceof DevinAgenticBridgeError ? error : null;
-  return {
-    error: {
-      message: bridge?.message || (error instanceof Error ? error.message : String(error)),
-      type: "devin_agentic_error",
-      code: bridge?.code || "devin_agentic_error",
-    },
-  };
+  const status = bridge?.status || 500;
+  const message = bridge?.message || (error instanceof Error ? error.message : String(error));
+  return buildErrorBody(status, sanitizeErrorMessage(message), undefined, {
+    type: "devin_agentic_error",
+    code: bridge?.code || "devin_agentic_error",
+  });
 }
 
-async function runAcpTurn(args: {
+export async function runAcpTurn(args: {
   devinBin: string;
   env: NodeJS.ProcessEnv;
   model: string;
@@ -121,8 +137,9 @@ async function runAcpTurn(args: {
   log?: ExecuteInput["log"];
 }) {
   const timeoutMs = Number(process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS || 120000);
-  const child = spawn(args.devinBin, ["acp"], {
+  const child = spawn(args.devinBin, ["acp", "--agent-type", "summarizer"], {
     env: args.env,
+    cwd: args.env.HOME,
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,
   });
@@ -130,17 +147,23 @@ async function runAcpTurn(args: {
   let nextId = 1;
   let buffer = "";
   let text = "";
-  let initialized = false;
-  let sessionCreated = false;
+  let phase: "initialize" | "session" | "prompt" = "initialize";
   let sessionId = "";
+  let initializeRequestId = 0;
+  let sessionRequestId = 0;
   let promptRequestId = 0;
   let settled = false;
 
   return await new Promise<string>((resolve, reject) => {
+    const abortHandler = () => {
+      finish(new DevinAgenticBridgeError("Devin ACP request was cancelled", "acp_cancelled", 499));
+    };
+
     const finish = (err: Error | null, value = "") => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      args.signal?.removeEventListener("abort", abortHandler);
       try {
         child.stdin.end();
       } catch {}
@@ -162,9 +185,8 @@ async function runAcpTurn(args: {
       return id;
     };
 
-    args.signal?.addEventListener("abort", () => {
-      finish(new DevinAgenticBridgeError("Devin ACP request was cancelled", "acp_cancelled", 499));
-    });
+    if (args.signal?.aborted) return abortHandler();
+    args.signal?.addEventListener("abort", abortHandler, { once: true });
 
     child.on("error", (err) => {
       const message =
@@ -180,6 +202,16 @@ async function runAcpTurn(args: {
 
     child.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
+      if (buffer.length + text.length > MAX_ACP_OUTPUT_CHARS) {
+        finish(
+          new DevinAgenticBridgeError(
+            "Devin ACP output exceeded the bridge limit",
+            "acp_output_too_large",
+            502
+          )
+        );
+        return;
+      }
       let nl: number;
       while ((nl = buffer.indexOf("\n")) !== -1) {
         const line = buffer.slice(0, nl).trim();
@@ -190,7 +222,14 @@ async function runAcpTurn(args: {
         try {
           msg = JSON.parse(line);
         } catch {
-          continue;
+          finish(
+            new DevinAgenticBridgeError(
+              "Devin ACP emitted invalid JSON on stdout",
+              "invalid_acp_frame",
+              502
+            )
+          );
+          return;
         }
 
         if (msg.error) {
@@ -204,17 +243,28 @@ async function runAcpTurn(args: {
           return;
         }
 
-        if (!initialized && msg.result !== undefined && !msg.method) {
-          initialized = true;
-          send("session/new", {
-            cwd: process.env.DEVIN_BRIDGE_WORKSPACE || process.cwd(),
+        if (phase === "initialize" && msg.id === initializeRequestId && msg.result !== undefined) {
+          const protocolVersion = Number(asRecord(msg.result).protocolVersion);
+          if (protocolVersion !== ACP_PROTOCOL_VERSION) {
+            finish(
+              new DevinAgenticBridgeError(
+                `Devin ACP negotiated unsupported protocol version: ${String(protocolVersion)}`,
+                "unsupported_acp_version",
+                502
+              )
+            );
+            return;
+          }
+          phase = "session";
+          sessionRequestId = send("session/new", {
+            cwd: args.env.HOME,
             mcpServers: [],
             model: args.model || undefined,
           });
           continue;
         }
 
-        if (initialized && !sessionCreated && msg.result !== undefined && !msg.method) {
+        if (phase === "session" && msg.id === sessionRequestId && msg.result !== undefined) {
           sessionId = String(asRecord(msg.result).sessionId || "");
           if (!sessionId) {
             finish(
@@ -226,7 +276,7 @@ async function runAcpTurn(args: {
             );
             return;
           }
-          sessionCreated = true;
+          phase = "prompt";
           promptRequestId = send("session/prompt", {
             sessionId,
             prompt: [{ type: "text", text: args.promptText }],
@@ -236,6 +286,17 @@ async function runAcpTurn(args: {
 
         if (msg.method === "session/update" || msg.method === "$/update") {
           const params = asRecord(msg.params);
+          const updateSessionId = String(params.sessionId || "");
+          if (updateSessionId && sessionId && updateSessionId !== sessionId) {
+            finish(
+              new DevinAgenticBridgeError(
+                "Devin ACP update referenced a different session",
+                "acp_session_mismatch",
+                502
+              )
+            );
+            return;
+          }
           const update = asRecord(params.update);
           const kind = String(update.sessionUpdate || params.type || "");
           if (kind === "agent_message_chunk") {
@@ -250,10 +311,40 @@ async function runAcpTurn(args: {
           continue;
         }
 
-        if (sessionCreated && msg.id === promptRequestId && msg.result !== undefined) {
+        if (phase === "prompt" && msg.id === promptRequestId && msg.result !== undefined) {
+          const stopReason = String(asRecord(msg.result).stopReason || "");
+          if (stopReason === "cancelled") {
+            finish(
+              new DevinAgenticBridgeError("Devin ACP cancelled the turn", "acp_cancelled", 502)
+            );
+            return;
+          }
           const resultText =
             extractText(asRecord(msg.result).content) || extractText(asRecord(msg.result).message);
-          finish(null, text || resultText);
+          const finalText = text || resultText;
+          if (!finalText) {
+            finish(
+              new DevinAgenticBridgeError(
+                `Devin ACP completed without model output (stopReason=${stopReason || "missing"})`,
+                "empty_acp_output",
+                502
+              )
+            );
+            return;
+          }
+          finish(null, finalText);
+          continue;
+        }
+
+        if (msg.id !== undefined && msg.id !== null && !msg.method) {
+          finish(
+            new DevinAgenticBridgeError(
+              `Devin ACP returned an unexpected response id: ${String(msg.id)}`,
+              "unexpected_acp_response",
+              502
+            )
+          );
+          return;
         }
       }
     });
@@ -271,12 +362,30 @@ async function runAcpTurn(args: {
         );
     });
 
-    send("initialize", {
-      protocolVersion: "0.3",
+    initializeRequestId = send("initialize", {
+      protocolVersion: ACP_PROTOCOL_VERSION,
       clientInfo: { name: "omniroute-devin-cli-agentic", version: "1.0" },
-      capabilities: {},
+      clientCapabilities: {},
     });
   });
+}
+
+function assertKnownDevinModel(model: string): void {
+  if (!DEVIN_MODEL_CATALOG.some((entry) => entry.id === model)) {
+    throw new DevinAgenticBridgeError(
+      `Model is not present in the current Devin catalog: ${model}`,
+      "unknown_devin_model",
+      400
+    );
+  }
+}
+
+async function generateAgenticOutput(
+  args: Omit<Parameters<typeof runAcpTurn>[0], "promptText">,
+  promptText: string
+) {
+  const first = await runAcpTurn({ ...args, promptText });
+  return first;
 }
 
 function extractText(value: unknown): string {
@@ -309,21 +418,45 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
 
   async execute({ model, body, stream, credentials, signal, log }: ExecuteInput) {
     try {
+      assertKnownDevinModel(model);
       const prompt = serializeAnthropicForDevin(body);
       const devinBin = resolveDevinBin();
       log?.info?.("DEVIN_AGENTIC", `devin acp → model=${model}, bin=${devinBin}`);
 
-      const text = await runAcpTurn({
+      const turnArgs = {
         devinBin,
         env: buildDevinChildEnv(credentials),
         model,
-        promptText: prompt.text,
         signal,
         log,
-      });
+      };
 
-      const tool = parseDevinToolRequest(text, prompt.tools);
-      const id = `msg_devin_${Date.now()}`;
+      let text = await generateAgenticOutput(turnArgs, prompt.text);
+      let tool;
+      try {
+        tool = parseDevinToolRequest(text, prompt.tools, prompt.idSeed);
+      } catch (error) {
+        if (
+          !(error instanceof DevinAgenticBridgeError) ||
+          !REPAIRABLE_TOOL_ERRORS.has(error.code)
+        ) {
+          throw error;
+        }
+        const repairPrompt = [
+          prompt.text,
+          "",
+          "---",
+          "",
+          "[Single Repair Attempt]",
+          `The previous output was rejected: ${sanitizeErrorMessage(error.message)}`,
+          "Return either plain final text or exactly one standalone <tool> JSON envelope.",
+          "Do not narrate a tool action.",
+        ].join("\n");
+        text = await generateAgenticOutput(turnArgs, repairPrompt);
+        tool = parseDevinToolRequest(text, prompt.tools, prompt.idSeed);
+      }
+
+      const id = `msg_devin_${randomUUID().replaceAll("-", "")}`;
       const outputTokens = estimateTokens(text);
       const message = tool
         ? buildClaudeToolUseResponse({

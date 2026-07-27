@@ -10,6 +10,7 @@ export type DevinPrompt = {
   text: string;
   tools: AnthropicTool[];
   inputTokensEstimate: number;
+  idSeed: string;
 };
 
 export type ParsedToolRequest = {
@@ -53,4 +54,3 @@ export function asRecord(value: unknown): JsonRecord {
 export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
-

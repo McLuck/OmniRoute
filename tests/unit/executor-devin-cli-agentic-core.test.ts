@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildClaudeSseFrames } from "../../open-sse/executors/devin-agentic/anthropicResponse.ts";
-import { serializeAnthropicForDevin } from "../../open-sse/executors/devin-agentic/serializer.ts";
+import {
+  MAX_TOOL_RESULT_CHARS,
+  serializeAnthropicForDevin,
+} from "../../open-sse/executors/devin-agentic/serializer.ts";
 import { parseDevinToolRequest } from "../../open-sse/executors/devin-agentic/toolParser.ts";
 
 const readTool = {
@@ -40,6 +43,52 @@ test("devin agentic serializer preserves Anthropic tool history and schemas", ()
   assert.match(prompt.text, /\[Assistant Tool Use\]/);
   assert.match(prompt.text, /\[Tool Result\]/);
   assert.equal(prompt.tools[0].name, "Read");
+  assert.match(prompt.idSeed, /^[a-f0-9]{24}$/);
+});
+
+test("devin agentic serializer preserves tool choice and validates tool-result association", () => {
+  const prompt = serializeAnthropicForDevin({
+    tools: [readTool],
+    tool_choice: { type: "tool", name: "Read" },
+    messages: [{ role: "user", content: "Read it" }],
+  });
+  assert.match(prompt.text, /Call exactly this tool: Read/);
+  assert.throws(
+    () =>
+      serializeAnthropicForDevin({
+        tools: [readTool],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_missing", content: "nope" }],
+          },
+        ],
+      }),
+    /unknown tool_use id/
+  );
+});
+
+test("devin agentic serializer marks bounded tool-result truncation explicitly", () => {
+  const prompt = serializeAnthropicForDevin({
+    tools: [readTool],
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "toolu_big", name: "Read", input: { file_path: "a" } }],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_big",
+            content: "x".repeat(MAX_TOOL_RESULT_CHARS + 9),
+          },
+        ],
+      },
+    ],
+  });
+  assert.match(prompt.text, /\[TRUNCATED 9 CHARACTERS BY OMNIROUTE\]/);
 });
 
 test("devin agentic serializer rejects images explicitly", () => {
@@ -55,12 +104,22 @@ test("devin agentic serializer rejects images explicitly", () => {
 test("devin agentic parser validates known tool and arguments", () => {
   const parsed = parseDevinToolRequest(
     '<tool>{"name":"Read","arguments":{"file_path":"src/index.ts"}}</tool>',
-    [readTool]
+    [readTool],
+    "request-a"
   );
 
   assert.equal(parsed?.name, "Read");
   assert.deepEqual(parsed?.input, { file_path: "src/index.ts" });
   assert.match(parsed?.id || "", /^tool_devin_/);
+});
+
+test("devin agentic tool ids are stable per request and distinct across turns", () => {
+  const text = '<tool>{"name":"Read","arguments":{"file_path":"src/index.ts"}}</tool>';
+  const first = parseDevinToolRequest(text, [readTool], "request-a");
+  const retry = parseDevinToolRequest(text, [readTool], "request-a");
+  const laterTurn = parseDevinToolRequest(text, [readTool], "request-b");
+  assert.equal(first?.id, retry?.id);
+  assert.notEqual(first?.id, laterTurn?.id);
 });
 
 test("devin agentic parser rejects unknown tools and invalid arguments", () => {
