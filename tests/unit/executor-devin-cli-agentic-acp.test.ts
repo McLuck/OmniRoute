@@ -5,11 +5,49 @@ import os from "node:os";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 
-import { DevinCliAgenticExecutor } from "../../open-sse/executors/devin-cli-agentic.ts";
+import {
+  assertLocalAcpUrl,
+  buildDevinChildEnv,
+  DevinCliAgenticExecutor,
+} from "../../open-sse/executors/devin-cli-agentic.ts";
+
+process.env.DEVIN_AGENTIC_HOME = path.join(process.cwd(), ".sandbox", "unit-home");
 
 async function readResponseText(response: Response) {
   return await response.text();
 }
+
+test("Devin child environment is allowlisted and requires an isolated home", () => {
+  const isolatedHome = path.join(process.cwd(), ".sandbox", "unit-home");
+  const env = buildDevinChildEnv(
+    { apiKey: "devin-test" },
+    {
+      HOME: "/Users/example",
+      PATH: "/usr/bin:/bin",
+      ANTHROPIC_AUTH_TOKEN: "must-not-leak",
+      AWS_ACCESS_KEY_ID: "must-not-leak",
+      GITHUB_TOKEN: "must-not-leak",
+      DEVIN_AGENTIC_HOME: isolatedHome,
+    }
+  );
+
+  assert.equal(env.HOME, isolatedHome);
+  assert.equal(env.PATH, "/usr/bin:/bin");
+  assert.equal(env.WINDSURF_API_KEY, undefined);
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.equal(env.AWS_ACCESS_KEY_ID, undefined);
+  assert.equal(env.GITHUB_TOKEN, undefined);
+  assert.throws(
+    () => buildDevinChildEnv({}, { PATH: "/usr/bin", DEVIN_AGENTIC_HOME: "/tmp/outside" }),
+    /inside the bridge sandbox/
+  );
+});
+
+test("Devin agentic upstream is fixed to local ACP stdio", () => {
+  assert.doesNotThrow(() => assertLocalAcpUrl("devin://acp/stdio"));
+  assert.throws(() => assertLocalAcpUrl("https://api.anthropic.com"), /ACP stdio/);
+  assert.throws(() => assertLocalAcpUrl("http://localhost:9999"), /ACP stdio/);
+});
 
 function writeMockDevin(tmpDir: string, responseText: string) {
   const framesFile = path.join(tmpDir, "frames.json");
@@ -118,4 +156,3 @@ test("DevinCliAgenticExecutor returns Anthropic SSE for streaming Claude clients
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
-

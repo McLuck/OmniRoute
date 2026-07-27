@@ -26,9 +26,7 @@ test("devin agentic serializer preserves Anthropic tool history and schemas", ()
       { role: "user", content: [{ type: "text", text: "Inspect the file" }] },
       {
         role: "assistant",
-        content: [
-          { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a.ts" } },
-        ],
+        content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a.ts" } }],
       },
       {
         role: "user",
@@ -88,15 +86,24 @@ test("devin agentic parser leaves narrative text as text, not a tool", () => {
   assert.equal(parseDevinToolRequest("I read the file and it passes.", [readTool]), null);
 });
 
+test("devin agentic parser rejects mixed narrative and tool action", () => {
+  assert.throws(
+    () =>
+      parseDevinToolRequest(
+        'I will read it. <tool>{"name":"Read","arguments":{"file_path":"a.ts"}}</tool>',
+        [readTool]
+      ),
+    /standalone tool envelope/
+  );
+});
+
 test("devin agentic SSE renders Anthropic tool lifecycle", () => {
   const sse = buildClaudeSseFrames({
     id: "msg_1",
     type: "message",
     role: "assistant",
     model: "swe-1-7",
-    content: [
-      { type: "tool_use", id: "tool_devin_1", name: "Read", input: { file_path: "a.ts" } },
-    ],
+    content: [{ type: "tool_use", id: "tool_devin_1", name: "Read", input: { file_path: "a.ts" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
     usage: { input_tokens: 10, output_tokens: 2 },
@@ -109,4 +116,3 @@ test("devin agentic SSE renders Anthropic tool lifecycle", () => {
   assert.match(sse, /"stop_reason":"tool_use"/);
   assert.match(sse, /event: message_stop/);
 });
-

@@ -55,18 +55,49 @@ function rpc(method: string, params: unknown, id: number): string {
   return JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
 }
 
-function buildChildEnv(credentials: ExecuteInput["credentials"]): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+export function assertLocalAcpUrl(url: string): void {
+  if (url !== "devin://acp/stdio") {
+    throw new DevinAgenticBridgeError(
+      "devin-cli-agentic accepts only the local Devin ACP stdio upstream",
+      "invalid_acp_upstream",
+      500
+    );
+  }
+}
+
+function isIsolatedHome(value: string): boolean {
+  return value === "/home/bridge" || value.includes("/.sandbox/");
+}
+
+export function buildDevinChildEnv(
+  _credentials: ExecuteInput["credentials"],
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const home = source.DEVIN_AGENTIC_HOME?.trim() || "";
+  if (!home || !path.isAbsolute(home) || !isIsolatedHome(home)) {
+    throw new DevinAgenticBridgeError(
+      "DEVIN_AGENTIC_HOME must be an absolute path inside the bridge sandbox",
+      "unsafe_devin_home",
+      500
+    );
+  }
+
+  const env: NodeJS.ProcessEnv = {
+    HOME: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_CACHE_HOME: path.join(home, ".cache"),
+    PATH: source.PATH || "/usr/local/bin:/usr/bin:/bin",
+    LANG: source.LANG || "C.UTF-8",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    DISABLE_TELEMETRY: "1",
+    DISABLE_ERROR_REPORTING: "1",
+    DISABLE_AUTOUPDATER: "1",
+  };
+  if (source.LC_ALL) env.LC_ALL = source.LC_ALL;
+  if (source.TERM) env.TERM = source.TERM;
+
   for (const key of CLAUDE_ENV_BLOCKLIST) delete env[key];
-
-  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
-  env.DISABLE_TELEMETRY = "1";
-  env.DISABLE_ERROR_REPORTING = "1";
-  env.DISABLE_AUTOUPDATER = "1";
-
-  const apiKey =
-    credentials.apiKey || credentials.accessToken || process.env.WINDSURF_API_KEY || "";
-  if (apiKey) env.WINDSURF_API_KEY = apiKey;
   return env;
 }
 
@@ -93,7 +124,7 @@ async function runAcpTurn(args: {
   const child = spawn(args.devinBin, ["acp"], {
     env: args.env,
     stdio: ["pipe", "pipe", "pipe"],
-    shell: process.platform === "win32",
+    shell: false,
   });
 
   let nextId = 1;
@@ -120,11 +151,7 @@ async function runAcpTurn(args: {
 
     const timer = setTimeout(() => {
       finish(
-        new DevinAgenticBridgeError(
-          `Devin ACP timed out after ${timeoutMs}ms`,
-          "acp_timeout",
-          504
-        )
+        new DevinAgenticBridgeError(`Devin ACP timed out after ${timeoutMs}ms`, "acp_timeout", 504)
       );
     }, timeoutMs);
     timer.unref?.();
@@ -190,7 +217,13 @@ async function runAcpTurn(args: {
         if (initialized && !sessionCreated && msg.result !== undefined && !msg.method) {
           sessionId = String(asRecord(msg.result).sessionId || "");
           if (!sessionId) {
-            finish(new DevinAgenticBridgeError("Devin ACP session/new returned no sessionId", "missing_session_id", 502));
+            finish(
+              new DevinAgenticBridgeError(
+                "Devin ACP session/new returned no sessionId",
+                "missing_session_id",
+                502
+              )
+            );
             return;
           }
           sessionCreated = true;
@@ -207,14 +240,19 @@ async function runAcpTurn(args: {
           const kind = String(update.sessionUpdate || params.type || "");
           if (kind === "agent_message_chunk") {
             text += extractText(update.content);
-          } else if (kind === "message_delta" || kind === "text_delta" || kind === "content_delta") {
+          } else if (
+            kind === "message_delta" ||
+            kind === "text_delta" ||
+            kind === "content_delta"
+          ) {
             text += String(params.content || params.delta || params.text || "");
           }
           continue;
         }
 
         if (sessionCreated && msg.id === promptRequestId && msg.result !== undefined) {
-          const resultText = extractText(asRecord(msg.result).content) || extractText(asRecord(msg.result).message);
+          const resultText =
+            extractText(asRecord(msg.result).content) || extractText(asRecord(msg.result).message);
           finish(null, text || resultText);
         }
       }
@@ -223,7 +261,14 @@ async function runAcpTurn(args: {
     child.on("close", (code) => {
       if (settled) return;
       if (code === 0 && text) finish(null, text);
-      else finish(new DevinAgenticBridgeError(`Devin CLI exited before completing the turn with code ${code}`, "acp_early_exit", 502));
+      else
+        finish(
+          new DevinAgenticBridgeError(
+            `Devin CLI exited before completing the turn with code ${code}`,
+            "acp_early_exit",
+            502
+          )
+        );
     });
 
     send("initialize", {
@@ -249,7 +294,9 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
   }
 
   buildUrl(): string {
-    return "devin://acp/stdio";
+    const url = "devin://acp/stdio";
+    assertLocalAcpUrl(url);
+    return url;
   }
 
   buildHeaders(): Record<string, string> {
@@ -268,7 +315,7 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
 
       const text = await runAcpTurn({
         devinBin,
-        env: buildChildEnv(credentials),
+        env: buildDevinChildEnv(credentials),
         model,
         promptText: prompt.text,
         signal,
@@ -321,4 +368,3 @@ export class DevinCliAgenticExecutor extends BaseExecutor {
     }
   }
 }
-

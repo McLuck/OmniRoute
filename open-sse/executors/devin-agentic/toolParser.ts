@@ -31,7 +31,9 @@ function validateSchema(value: unknown, schema: JsonRecord, path: string): strin
   }
 
   if (Array.isArray(schema.enum) && !schema.enum.some((item) => item === value)) {
-    errors.push(`${path} must be one of ${schema.enum.map((item) => JSON.stringify(item)).join(", ")}`);
+    errors.push(
+      `${path} must be one of ${schema.enum.map((item) => JSON.stringify(item)).join(", ")}`
+    );
   }
 
   if (schema.type === "object" || (value && typeof value === "object" && !Array.isArray(value))) {
@@ -43,7 +45,8 @@ function validateSchema(value: unknown, schema: JsonRecord, path: string): strin
 
     const properties = asRecord(schema.properties);
     for (const [key, propSchema] of Object.entries(properties)) {
-      if (key in record) errors.push(...validateSchema(record[key], asRecord(propSchema), `${path}.${key}`));
+      if (key in record)
+        errors.push(...validateSchema(record[key], asRecord(propSchema), `${path}.${key}`));
     }
 
     if (schema.additionalProperties === false) {
@@ -55,7 +58,9 @@ function validateSchema(value: unknown, schema: JsonRecord, path: string): strin
 
   if (Array.isArray(value) && schema.items) {
     const itemSchema = asRecord(schema.items);
-    value.forEach((item, index) => errors.push(...validateSchema(item, itemSchema, `${path}[${index}]`)));
+    value.forEach((item, index) =>
+      errors.push(...validateSchema(item, itemSchema, `${path}[${index}]`))
+    );
   }
 
   return errors;
@@ -71,6 +76,13 @@ export function parseDevinToolRequest(text: string, tools: AnthropicTool[]) {
     );
   }
 
+  if (text.trim() !== matches[0][0].trim()) {
+    throw new DevinAgenticBridgeError(
+      "Devin tool request must be a standalone tool envelope without narrative text",
+      "mixed_tool_narrative"
+    );
+  }
+
   let payload: JsonRecord;
   try {
     payload = asRecord(JSON.parse(matches[0][1] || "{}"));
@@ -79,7 +91,8 @@ export function parseDevinToolRequest(text: string, tools: AnthropicTool[]) {
   }
 
   const name = typeof payload.name === "string" ? payload.name.trim() : "";
-  if (!name) throw new DevinAgenticBridgeError("Devin tool request is missing name", "missing_tool_name");
+  if (!name)
+    throw new DevinAgenticBridgeError("Devin tool request is missing name", "missing_tool_name");
 
   const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) {
@@ -96,7 +109,9 @@ export function parseDevinToolRequest(text: string, tools: AnthropicTool[]) {
     );
   }
 
-  const digest = createHash("sha256").update(`${name}:${stableJson(input)}`).digest("hex").slice(0, 16);
+  const digest = createHash("sha256")
+    .update(`${name}:${stableJson(input)}`)
+    .digest("hex")
+    .slice(0, 16);
   return { id: `tool_devin_${digest}`, name, input };
 }
-
