@@ -38,9 +38,37 @@ const REPAIRABLE_TOOL_ERRORS = new Set([
 ]);
 
 function describesUnexecutedToolIntent(text: string): boolean {
-  return /\b(?:i(?:'ll| will)|let me)\b[^\n.!?]{0,160}\b(?:read|inspect|examine|edit|fix|run|check|test|start)\b/i.test(
-    text
+  const action = "(?:read|inspect|examine|edit|fix|run|check|test|start)";
+  const futureAction = new RegExp(
+    `\\b(?:(?:next(?: immediate)?|immediate next)\\s+(?:task|step)|planned actions?)\\b[\\s\\S]{0,320}\\b${action}\\b`,
+    "i"
   );
+  return (
+    futureAction.test(text) ||
+    new RegExp(`\\b(?:i(?:'ll| will)|let me)\\b[^\\n.!?]{0,160}\\b${action}\\b`, "i").test(text) ||
+    new RegExp(`\\bnext steps?\\s*:\\s*${action}\\b`, "i").test(text) ||
+    new RegExp(`\\bnext immediate (?:task|step)\\s*:\\s*${action}\\b`, "i").test(text) ||
+    new RegExp(`\\bplanned actions?\\s*:\\s*${action}\\b`, "i").test(text) ||
+    new RegExp(`\\b(?:still|now)\\s+(?:need|needs|required)\\s+to\\s+${action}\\b`, "i").test(
+      text
+    ) ||
+    /\btests?\s+(?:have|has|were|was)?\s*not\s+(?:yet\s+)?(?:been\s+)?run\b/i.test(text)
+  );
+}
+
+function framePromptForNoToolsSummarizer(promptText: string): string {
+  return [
+    "[Devin Summarizer Bridge]",
+    "Treat the content below as an execution trace whose next assistant output must be determined.",
+    "If another client-owned action is required, return exactly one <tool> JSON envelope using the catalog in the trace and no prose.",
+    "The client will execute that tool; never execute or claim to execute a tool inside Devin.",
+    "The client workspace is /workspace; /home/bridge is only the isolated Devin process home.",
+    "If the task is complete, return only a concise final answer.",
+    "Do not wrap the response in Markdown fences or a <summary> element.",
+    "",
+    "[Execution Trace]",
+    promptText,
+  ].join("\n");
 }
 
 const CLAUDE_ENV_BLOCKLIST = [
@@ -149,7 +177,7 @@ export async function runAcpTurn(args: {
   log?: ExecuteInput["log"];
 }) {
   const timeoutMs = Number(process.env.DEVIN_AGENTIC_ACP_TIMEOUT_MS || 120000);
-  const child = spawn(args.devinBin, ["acp"], {
+  const child = spawn(args.devinBin, ["acp", "--agent-type", "summarizer"], {
     env: args.env,
     cwd: args.env.HOME,
     stdio: ["pipe", "pipe", "pipe"],
@@ -277,7 +305,8 @@ export async function runAcpTurn(args: {
         }
 
         if (phase === "session" && msg.id === sessionRequestId && msg.result !== undefined) {
-          sessionId = String(asRecord(msg.result).sessionId || "");
+          const sessionResult = asRecord(msg.result);
+          sessionId = String(sessionResult.sessionId || "");
           if (!sessionId) {
             finish(
               new DevinAgenticBridgeError(
@@ -288,10 +317,11 @@ export async function runAcpTurn(args: {
             );
             return;
           }
+
           phase = "prompt";
           promptRequestId = send("session/prompt", {
             sessionId,
-            prompt: [{ type: "text", text: args.promptText }],
+            prompt: [{ type: "text", text: framePromptForNoToolsSummarizer(args.promptText) }],
           });
           continue;
         }

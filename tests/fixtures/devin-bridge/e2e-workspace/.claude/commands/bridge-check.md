@@ -5,5 +5,6 @@ allowed-tools: Skill, Read, Edit, Bash
 
 `COMMAND_BRIDGE_ACTIVE`
 
-Use the bridge-proof skill. Locate and read the implementation, correct it, run its test, diagnose
-the intentionally failed first correction, fix it, rerun the test, and report completion.
+Use the bridge-proof skill. Locate and read the implementation. Correct it if needed, run its test,
+and diagnose and fix any real failure. If it is already correct, do not introduce a regression.
+End with `BRIDGE_E2E_COMPLETE` only after `npm test` passes.

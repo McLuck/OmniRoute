@@ -33,7 +33,10 @@ The safest implementation is a new provider id, `devin-cli-agentic`, with a sepa
 
 Claude Code sends Anthropic Messages requests to local OmniRoute. OmniRoute resolves model ids prefixed with `devin-cli-agentic/` to a new Claude-format provider. The new executor translates the complete Anthropic request into an explicit text prompt for Devin ACP, including system text, structured message history, tool schemas, and prior tool results.
 
-Devin remains a model backend. It must request tool execution by emitting a strict XML-wrapped JSON block:
+Devin remains a model backend. The executor starts the official fixed no-tools summarizer
+role with `devin acp --agent-type summarizer` and frames the serialized request as an
+execution trace. Devin must request client-owned tool execution by emitting a strict
+XML-wrapped JSON block:
 
 ```xml
 <tool>
@@ -74,7 +77,7 @@ The serializer preserves request order, `system`, `tool_choice`, exact tool sche
 
 ## Required Proof
 
-The offline profile must prove the ACP lifecycle, fragmented frames, stderr, early exit, hang/cancel, Anthropic JSON/SSE order, no fallback, and a real pinned Claude Code run that reads, edits, runs tests, observes `CLAUDE.md`, loads a skill and command, fires a hook, and completes at least one `tool_use -> tool_result -> continuation` loop. The isolation verifier checks env, mounts, UID, config paths, DNS/connection logs, local inference destination, selected provider, and fail-closed behavior. Live Devin remains unproved until official in-container login and three isolated agentic scenarios succeed.
+The offline profile must prove the ACP lifecycle, fragmented frames, stderr, early exit, hang/cancel, Anthropic JSON/SSE order, no fallback, and a real pinned Claude Code run that reads, edits, runs tests, observes `CLAUDE.md`, loads a skill and command, fires a hook, and completes at least one `tool_use -> tool_result -> continuation` loop. The isolation verifier checks env, mounts, UID, config paths, DNS/connection logs, local inference destination, selected provider, and fail-closed behavior. Live Devin is proved only by official in-container login and three isolated agentic scenarios.
 
 ## Safety Incident During Baseline
 
@@ -113,3 +116,19 @@ status gate, and catalog normalization. The live gate then runs three real Claud
 through the authenticated in-container Devin CLI and requires local Read/Edit/Bash activity,
 passing fixture tests, Devin-only routing, no allowed non-Devin egress, and an explicit error
 when the Devin backend is stopped.
+
+## Final Live Result
+
+The default-agent design was rejected after live evidence showed that `ask` mode can still
+emit Devin-owned ACP tool calls. The pinned CLI does not apply its top-level agent
+configuration to `devin acp`, so an `allowed-tools: []` configuration could not create a
+neutral backend. The fixed summarizer role is the only official ACP role in this version that
+is structurally no-tools.
+
+The execution-trace adaptation passed the authenticated live gate with
+`swe-1-7-lightning`. Three Claude Code processes completed analysis, edit/test, and local
+command/skill scenarios. Structured evidence proved that Claude Code issued `Read`, `Edit`,
+and `Bash` tool calls; two client-owned `npm test` calls succeeded. The guard audit proved
+Devin-only outbound access and zero Claude egress. Intermediate summary-shaped responses and
+transient ACP timeouts remain explicit failure modes; the adapter performs one bounded repair
+and the harness spaces scenarios to avoid bursty session creation.

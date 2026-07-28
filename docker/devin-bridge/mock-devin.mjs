@@ -2,7 +2,12 @@
 import fs from "node:fs";
 import readline from "node:readline";
 
-if (process.argv[2] !== "acp" || process.argv.length !== 3) {
+if (
+  process.argv[2] !== "acp" ||
+  process.argv[3] !== "--agent-type" ||
+  process.argv[4] !== "summarizer" ||
+  process.argv.length !== 5
+) {
   process.exit(64);
 }
 
@@ -66,9 +71,27 @@ rl.on("line", (line) => {
       send({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "unsafe session" } });
       return;
     }
-    send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "offline" } });
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { sessionId: "offline" },
+    });
+  } else if (message.method === "session/set_config_option") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32602, message: "summarizer mode must not be mutated" },
+    });
   } else if (message.method === "session/prompt") {
     const prompt = String(message.params?.prompt?.[0]?.text || "");
+    if (!prompt.includes("[Devin Summarizer Bridge]") || !prompt.includes("[Execution Trace]")) {
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: { code: -32602, message: "summarizer bridge framing required" },
+      });
+      return;
+    }
     if (prompt.includes("CONTRACT_AFTER_TOOL")) {
       log({ provider: "devin-cli-agentic", scenario: "after-tool" });
       send({

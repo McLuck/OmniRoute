@@ -137,7 +137,18 @@ rl.on("line", (line) => {
   if (msg.method === "initialize") {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
   } else if (msg.method === "session/new") {
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess_agentic" } }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {
+      sessionId: "sess_agentic",
+      modes: { currentModeId: "accept-edits", availableModes: [{ id: "accept-edits" }, { id: "ask" }] }
+    } }) + "\\n");
+  } else if (msg.method === "session/set_config_option") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: { configOptions: [{ id: "mode", currentValue: "ask" }] }
+    }) + "\\n");
+  } else if (msg.method === "session/set_mode") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
   } else if (msg.method === "session/prompt") {
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",
@@ -160,6 +171,21 @@ function writeScenarioMock(tmpDir: string, body: string) {
 const readline = require("readline");
 const rl = readline.createInterface({ input: process.stdin });
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const safeModes = { currentModeId: "accept-edits", availableModes: [{ id: "accept-edits" }, { id: "ask" }] };
+const sendSession = (msg, sessionId) => send({ jsonrpc: "2.0", id: msg.id, result: { sessionId, modes: safeModes } });
+const acceptAskMode = (msg) => {
+  if (msg.method === "session/set_mode") {
+    send({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return true;
+  }
+  if (msg.method !== "session/set_config_option") return false;
+  if (msg.params?.configId !== "mode" || msg.params?.type !== "id" || msg.params?.value !== "ask") {
+    send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "unsafe mode" } });
+  } else {
+    send({ jsonrpc: "2.0", id: msg.id, result: { configOptions: [{ id: "mode", currentValue: "ask" }] } });
+  }
+  return true;
+};
 ${body}
 `,
     { mode: 0o755 }
@@ -225,14 +251,78 @@ test("DevinCliAgenticExecutor returns Anthropic tool_use JSON and sends ACP fram
     const frames = JSON.parse(fs.readFileSync(framesFile, "utf8"));
     assert.ok(frames.some((frame: { method?: string }) => frame.method === "initialize"));
     assert.ok(frames.some((frame: { method?: string }) => frame.method === "session/new"));
+    assert.ok(
+      !frames.some((frame: { method?: string }) => frame.method === "session/set_config_option")
+    );
     assert.ok(frames.some((frame: { method?: string }) => frame.method === "session/prompt"));
     const initialize = frames.find((frame: { method?: string }) => frame.method === "initialize");
     assert.equal(initialize.params.protocolVersion, 1);
     assert.deepEqual(initialize.params.clientCapabilities, {});
-    assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), ["acp"]);
+    const prompt = frames.find((frame: { method?: string }) => frame.method === "session/prompt");
+    const promptText = prompt.params.prompt[0].text;
+    assert.match(promptText, /Devin Summarizer Bridge/);
+    assert.match(promptText, /execution trace/i);
+    assert.match(promptText, /client workspace is \/workspace/i);
+    assert.match(promptText, /Read src\/index\.ts/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), [
+      "acp",
+      "--agent-type",
+      "summarizer",
+    ]);
   } finally {
     if (oldBin === undefined) delete process.env.CLI_DEVIN_AGENTIC_BIN;
     else process.env.CLI_DEVIN_AGENTIC_BIN = oldBin;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("no-tools summarizer does not depend on mutable ACP permission modes", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-no-ask-mode-");
+  const scriptFile = writeScenarioMock(
+    tmpDir,
+    `rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "session/new") send({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: {
+      sessionId: "no-ask",
+      modes: { currentModeId: "accept-edits", availableModes: [{ id: "accept-edits", name: "Code" }] }
+    }
+  });
+  if (msg.method === "session/prompt") {
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "no-ask", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "unsafe" } } } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+  }
+});`
+  );
+  try {
+    const result = await executeTextRequest(scriptFile);
+    assert.equal(result.response.status, 200);
+    const body = JSON.parse(await result.response.text());
+    assert.equal(body.content[0].text, "unsafe");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("ACP client fails closed when session/new omits the session id", async () => {
+  const tmpDir = sandboxTmp("devin-agentic-unconfirmed-ask-mode-");
+  const scriptFile = writeScenarioMock(
+    tmpDir,
+    `rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: {} });
+});`
+  );
+  try {
+    const result = await executeTextRequest(scriptFile);
+    assert.equal(result.response.status, 502);
+    const body = JSON.parse(await result.response.text());
+    assert.equal(body.error.code, "missing_session_id");
+  } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
@@ -271,8 +361,9 @@ test("ACP client handles fragmented frames, multiple chunks, and stderr", async 
     tmpDir,
     `rl.on("line", (line) => {
   const msg = JSON.parse(line);
+  if (acceptAskMode(msg)) return;
   if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
-  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "fragmented" } });
+  if (msg.method === "session/new") sendSession(msg, "fragmented");
   if (msg.method === "session/prompt") {
     process.stderr.write("bounded diagnostic\\n");
     const first = JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fragmented", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hel" } } } });
@@ -301,8 +392,9 @@ test("ACP client fails closed when Devin attempts an internal tool call", async 
     tmpDir,
     `rl.on("line", (line) => {
   const msg = JSON.parse(line);
+  if (acceptAskMode(msg)) return;
   if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
-  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "internal-tool" } });
+  if (msg.method === "session/new") sendSession(msg, "internal-tool");
   if (msg.method === "session/prompt") {
     send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "internal-tool", update: { sessionUpdate: "tool_call", toolCallId: "internal-1", title: "Read a.ts" } } });
     send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "internal-tool", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done" } } } });
@@ -386,11 +478,12 @@ const count = Number(fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf8
 fs.writeFileSync(stateFile, String(count));
 rl.on("line", (line) => {
   const msg = JSON.parse(line);
+  if (acceptAskMode(msg)) return;
   if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
-  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "repair" } });
+  if (msg.method === "session/new") sendSession(msg, "repair");
   if (msg.method === "session/prompt") {
     const text = count === 1
-      ? 'I will read the file and start by examining its contents.'
+      ? '<summary>Current State: inspected math.js. The immediate next step was to read math.test.js, then fix the bug and run npm test.</summary>'
       : '<tool>{"name":"Read","arguments":{"file_path":"a.ts"}}</tool>';
     send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "repair", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
@@ -439,8 +532,9 @@ const count = Number(fs.existsSync(stateFile) ? fs.readFileSync(stateFile, "utf8
 fs.writeFileSync(stateFile, String(count));
 rl.on("line", (line) => {
   const msg = JSON.parse(line);
+  if (acceptAskMode(msg)) return;
   if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
-  if (msg.method === "session/new") send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "repair-narrative" } });
+  if (msg.method === "session/new") sendSession(msg, "repair-narrative");
   if (msg.method === "session/prompt") {
     const text = count === 1
       ? "I'll start by reading the file."

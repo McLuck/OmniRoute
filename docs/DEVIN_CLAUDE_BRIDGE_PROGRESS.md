@@ -1,6 +1,6 @@
 # Devin Claude Bridge Progress
 
-Updated: 2026-07-27
+Updated: 2026-07-28
 
 ## Baseline
 
@@ -11,64 +11,105 @@ Updated: 2026-07-27
 - Existing `devin-cli` remains unchanged; the new path is the separate
   `devin-cli-agentic` provider.
 
-## Proved offline
+## Implemented architecture
 
-- Focused unit and ACP suite: 27 tests passed.
-- Anthropic wire suite: non-streaming JSON, SSE event order, `tool_use`, direct
-  `tool_result` continuation, ACP error, and early process exit passed.
-- Final container build completed with the pinned CLIs and the production OmniRoute build.
-- Artifact inspection confirmed Node `26.0.0`, Claude Code `2.1.220`, and Devin CLI
-  `3000.2.17` while the container had no network.
-- Runtime isolation verifier passed in static and container checks.
-- Real Claude Code offline E2E passed in 9 turns. It loaded `CLAUDE.md`, discovered the
-  project skill and slash command, fired hooks, requested `Skill`, `Bash`, `Read`, and
-  `Edit`, observed a failing test, corrected the edit, reran the test successfully, and
-  returned the fixture's final success marker.
-- Every offline inference action recorded by the ACP fixture names only
-  `devin-cli-agentic`; provider termination returned an explicit error.
+- Claude Code runs only inside the non-root bridge container with its own empty config
+  volume and local OmniRoute base URL.
+- `devin-cli-agentic` preserves Anthropic messages, tool schemas, `tool_use`, and
+  `tool_result`, then calls the official Devin CLI over ACP stdio.
+- The executor starts `devin acp --agent-type summarizer`. This is the only fixed official
+  ACP role in the pinned CLI that has no Devin-owned tools.
+- The request is framed as an execution trace. Devin can return one strict client tool
+  envelope; Claude Code executes that tool locally.
+- Internal ACP `tool_call` events, unsupported blocks, invalid schemas, narrative actions,
+  timeouts, cancellation, and process failure all fail closed.
+- Provider and network policy prevent combo/auto/Anthropic fallback.
 
-Evidence is generated under `.sandbox/evidence` and is intentionally ignored by Git.
+## Offline proof
+
+- Focused serializer, parser, executor, ACP lifecycle, wire-format, environment, and audit
+  tests pass (39/39).
+- The contract suite covers Anthropic JSON/SSE, `tool_use`, `tool_result` continuation,
+  fragmented ACP frames, stderr, early exit, timeout, cancellation, and fail-closed provider
+  loss.
+- The production bridge image builds with the pinned CLIs.
+- Real Claude Code offline E2E loads `CLAUDE.md`, the project skill and slash command, fires
+  hooks, executes local tools over multiple turns, observes a failed test, repairs the file,
+  reruns the test, and completes.
+- The isolation verifier proves non-root/read-only execution, isolated mounts and config,
+  blocked Anthropic/Claude access, no host credential mounts, local-only inference, and no
+  fallback.
+
+Evidence is generated under `.sandbox/evidence` and ignored by Git.
 
 ## Regression status
 
-- Focused ESLint and `typecheck:core` passed; the final executor changes were rechecked with
-  `typecheck:core` and the 27-test bridge suite.
-- The complete `npm run check` reached the unit suite after lint, but the repository test
-  runner did not terminate after `quota-redis-store.test.ts`: an `ioredis` client kept
-  reconnecting to an unavailable local Redis endpoint. The runner was interrupted after
-  repeated `ECONNREFUSED` events, so this command is not reported as passed.
-- Documentation accuracy checks passed before this final status update and are rerun after it.
-- The fresh image rebuild and dedicated Devin volume ownership retry passed.
+- `typecheck:core`, focused ESLint, Prettier, shell/Node syntax, and the complete documentation
+  accuracy suite pass.
+- The broad `npm run check` is not reported as passed: after its lint phase, the repository
+  test runner remained alive while an existing `ioredis` client repeatedly retried an
+  unavailable local Redis endpoint after `quota-redis-store.test.ts`. The bridge-focused
+  suites, production image build, offline E2E, isolation proof, and live gate do not use that
+  Redis service and all pass.
 
-## Live Devin
+## Live Devin proof
 
-Not passed. The official Devin login succeeded inside the dedicated volume, and model
-discovery selected `swe-1-7-lightning`. Authorized live runs established the following:
+Passed with the official in-container login and discovered model
+`swe-1-7-lightning`. The terminal live run completed all three scenarios:
 
-1. `devin acp --agent-type summarizer` is not a neutral inference backend. The CLI's own
-   help identifies it as a no-tools summarizer, and its injected role caused future-action
-   narration, summaries, and malformed tool envelopes instead of a reliable Claude Code
-   tool loop.
-2. The default `devin acp` agent can emit the required XML tool envelope in a minimal probe,
-   but the full Claude Code request caused it to emit ACP `tool_call` events and attempt to
-   own tool execution.
-3. The adapter now rejects `tool_call` and `tool_call_update` with
-   `devin_internal_tool_execution` (`502`). Two live requests were observed failing closed;
-   a third in-flight request was aborted when the test was stopped to avoid automatic paid
-   retries.
-4. No three-scenario live pass exists. The live test must remain red until the official CLI
-   exposes a neutral no-tools generation mode (without the summarizer role) or another
-   supported Devin API provides equivalent raw model inference.
+1. Claude Code loaded the fixture instructions, issued client-owned `Read` calls, and
+   returned a correct defect analysis.
+2. Claude Code issued a real `Edit` changing subtraction to addition, then a client-owned
+   `Bash` call running `npm test`; the test reported one pass and zero failures.
+3. Claude Code initialization listed `bridge-check` and `bridge-proof`, read the corrected
+   source and test, executed another client-owned `npm test`, and completed successfully.
 
-The offline contract still proves `narrative -> single repair -> tool_use`, and a second
-narrative now fails closed instead of being accepted as a successful final response.
+The live evidence validator parses stream JSON and requires successful tool results. It does
+not accept a textual claim that a tool ran. It also rejects terminal summaries that report a
+blocker, incomplete work, or required next steps.
+
+The final live gate reported:
+
+```text
+PASS: validated Claude evidence for LIVE_ANALYSIS_COMPLETE
+PASS: validated Claude evidence for LIVE_FIX_COMPLETE
+PASS: validated Claude evidence for BRIDGE_E2E_COMPLETE
+PASS: three live Devin-backed Claude Code scenarios completed
+PASS: live model swe-1-7-lightning was discovered and validated by three scenarios
+```
+
+The same gate validated the network audit: only the Devin guard path was used, no internal
+Devin tool event was accepted, and the Claude egress audit remained empty.
+
+## Investigation conclusion
+
+The initial default-agent hypothesis failed because ACP permission modes do not turn the
+default Devin agent into a raw inference backend. Even `ask` mode can emit Devin-owned
+`tool_call` events. A discovered `allowed-tools: []` agent configuration was not consumed by
+`devin acp` in CLI `3000.2.17`.
+
+The working adaptation uses the official `summarizer` agent because it is structurally
+no-tools. Its fixed summarization behavior can produce intermediate prose, so the bridge
+frames requests as execution traces, detects future-action narration, performs at most one
+strict repair, and otherwise fails. Live validation also exposed transient ACP timeouts;
+the harness now spaces independent scenarios rather than weakening routing or retrying into
+another provider.
 
 ## Safety record
 
 No host Claude executable, configuration, login, OAuth token, Keychain, or Anthropic API was
-used. The first pre-isolation unit attempt initialized the repository's default OmniRoute
-database at `/Users/lucasisrael/.omniroute/storage.sqlite`; it was not rolled back or touched
-again. All subsequent bridge commands set isolated database paths under `.sandbox`.
+used. The dedicated Docker volumes remain role-separated. No credential value is written to
+the repository or evidence output.
 
-The final live attempts used only the dedicated Docker volumes. Claude Code ran only inside
-the non-root container; no host Claude configuration or credential path was mounted or read.
+During the early baseline, a focused test without isolated `DATA_DIR` initialized the
+repository's normal OmniRoute database at `/Users/lucasisrael/.omniroute/storage.sqlite`.
+It was not rolled back or touched again. Every bridge command now pins database and temporary
+paths under the worktree's `.sandbox` directory.
+
+## Remaining limits
+
+- The no-tools backend has a summarizer system role rather than a neutral generation role.
+- One client tool call per response is supported; parallel tool calls are rejected.
+- ACP processes are per-turn and stateless.
+- Live Devin availability can still produce explicit `502`/`504` failures.
+- Images and unadvertised vision/effort/large-context capabilities remain unsupported.

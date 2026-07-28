@@ -14,6 +14,7 @@ import {
   validateZeroClaudeEgress,
 } from "../../scripts/devin-bridge/runtime-policy.mjs";
 import { selectLiveModel } from "../../scripts/devin-bridge/select-live-model.mjs";
+import { validateClaudeEvidenceText } from "../../scripts/devin-bridge/validate-claude-evidence.mjs";
 
 const root = process.cwd();
 const composePath = path.join(root, "docker", "devin-bridge", "compose.yml");
@@ -22,6 +23,17 @@ const mockE2ePath = path.join(root, "scripts", "devin-bridge", "test-e2e-mock");
 const launchPath = path.join(root, "scripts", "devin-bridge", "launch");
 const loginPath = path.join(root, "scripts", "devin-bridge", "login-devin");
 const liveE2ePath = path.join(root, "scripts", "devin-bridge", "test-live-devin");
+const liveRunnerPath = path.join(root, "docker", "devin-bridge", "run-claude-live-e2e.sh");
+const bridgeCommandPath = path.join(
+  root,
+  "tests",
+  "fixtures",
+  "devin-bridge",
+  "e2e-workspace",
+  ".claude",
+  "commands",
+  "bridge-check.md"
+);
 const verifierPath = path.join(root, "scripts", "devin-bridge", "verify-anthropic-isolation");
 
 interface ComposeService {
@@ -151,6 +163,144 @@ test("model discovery accepts only explicit uid/id fields and detects catalog am
   );
 });
 
+test("Claude evidence requires a standalone marker and a successful client-owned npm test", () => {
+  const toolId = "tool-npm-test";
+  const events = [
+    {
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: toolId, name: "Bash", input: { command: "npm test" } }],
+      },
+    },
+    {
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: toolId, is_error: false, content: "1 passed" },
+        ],
+      },
+    },
+    { type: "result", subtype: "success", result: "Fixed and tested.\nLIVE_FIX_COMPLETE" },
+  ];
+  const text = events.map((event) => JSON.stringify(event)).join("\n");
+
+  assert.doesNotThrow(() =>
+    validateClaudeEvidenceText(text, {
+      marker: "LIVE_FIX_COMPLETE",
+      requiredTools: ["Bash"],
+      requireSuccessfulNpmTest: true,
+    })
+  );
+  assert.doesNotThrow(() =>
+    validateClaudeEvidenceText(
+      `${events
+        .slice(0, 2)
+        .map((event) => JSON.stringify(event))
+        .join("\n")}\n${JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "Task completed; the requested marker is LIVE_FIX_COMPLETE.",
+      })}`,
+      {
+        marker: "LIVE_FIX_COMPLETE",
+        requiredTools: ["Bash"],
+        requireSuccessfulNpmTest: true,
+      }
+    )
+  );
+  assert.throws(
+    () =>
+      validateClaudeEvidenceText(
+        `${events
+          .slice(0, 2)
+          .map((event) => JSON.stringify(event))
+          .join("\n")}\n${JSON.stringify({
+          type: "result",
+          subtype: "success",
+          result: "Task completion condition: end with LIVE_FIX_COMPLETE after tests.",
+        })}`,
+        { marker: "LIVE_FIX_COMPLETE" }
+      ),
+    /standalone marker/
+  );
+  assert.throws(
+    () =>
+      validateClaudeEvidenceText(
+        [events[0], events[2]].map((event) => JSON.stringify(event)).join("\n"),
+        {
+          marker: "LIVE_FIX_COMPLETE",
+          requiredTools: ["Bash"],
+          requireSuccessfulNpmTest: true,
+        }
+      ),
+    /successful npm test/
+  );
+  assert.throws(
+    () =>
+      validateClaudeEvidenceText(
+        `${events
+          .slice(0, 2)
+          .map((event) => JSON.stringify(event))
+          .join("\n")}\n${JSON.stringify({
+          type: "result",
+          subtype: "success",
+          result:
+            "Task ran npm test.\n\nNext steps needed:\n- finish the work\n\n**Blocker**: work is incomplete. BRIDGE_E2E_COMPLETE",
+        })}`,
+        {
+          marker: "BRIDGE_E2E_COMPLETE",
+          requiredTools: ["Bash"],
+          requireSuccessfulNpmTest: true,
+        }
+      ),
+    /explicitly reports incomplete work/
+  );
+
+  const commandEvidence = [
+    {
+      type: "system",
+      subtype: "init",
+      slash_commands: ["bridge-check"],
+      skills: ["bridge-proof"],
+    },
+    ...events.slice(0, 2),
+    { type: "result", subtype: "success", result: "The task is complete." },
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+  assert.doesNotThrow(() =>
+    validateClaudeEvidenceText(commandEvidence, {
+      marker: "BRIDGE_E2E_COMPLETE",
+      requiredTools: ["Bash"],
+      requireSuccessfulNpmTest: true,
+      requiredSlashCommand: "bridge-check",
+      requiredSkill: "bridge-proof",
+      acceptExplicitCompletion: true,
+    })
+  );
+  assert.throws(
+    () =>
+      validateClaudeEvidenceText(commandEvidence, {
+        marker: "BRIDGE_E2E_COMPLETE",
+        requiredTools: ["Bash"],
+        requireSuccessfulNpmTest: true,
+        requiredSlashCommand: "missing-command",
+        requiredSkill: "bridge-proof",
+        acceptExplicitCompletion: true,
+      }),
+    /required slash command/
+  );
+});
+
+test("live command declares the terminal marker required by its evidence validator", () => {
+  const command = fs.readFileSync(bridgeCommandPath, "utf8");
+  const runner = fs.readFileSync(liveRunnerPath, "utf8");
+  assert.match(command, /BRIDGE_E2E_COMPLETE/);
+  assert.match(command, /only after `npm test` passes/);
+  assert.match(command, /do not introduce a regression/);
+  assert.match(runner, /validate_scenario[^\n]*BRIDGE_E2E_COMPLETE Bash true/);
+});
+
 test("audit policies reject forged metadata, missing proof, and unexpected Devin hosts", () => {
   const safeStat = {
     isFile: () => true,
@@ -210,6 +360,7 @@ test("scripts use atomic audit resets, readiness waits, cleanup traps, and stric
   const login = fs.readFileSync(loginPath, "utf8");
   const launch = fs.readFileSync(launchPath, "utf8");
   const live = fs.readFileSync(liveE2ePath, "utf8");
+  const liveRunner = fs.readFileSync(liveRunnerPath, "utf8");
   const mock = fs.readFileSync(mockE2ePath, "utf8");
   const verifier = fs.readFileSync(verifierPath, "utf8");
   assert.match(common, /chmod 01777/);
@@ -223,6 +374,11 @@ test("scripts use atomic audit resets, readiness waits, cleanup traps, and stric
   assert.match(login, /auth login --force-manual-token-flow/);
   assert.match(live, /bridge_assert_devin_guard_audit/);
   assert.match(live, /bridge_assert_zero_claude_egress/);
+  assert.match(liveRunner, /validate-claude-evidence\.mjs/);
+  assert.match(liveRunner, /Use Edit now to replace/);
+  assert.match(liveRunner, /Do not summarize before npm test succeeds/);
+  assert.match(liveRunner, /DEVIN_BRIDGE_LIVE_SCENARIO_COOLDOWN_SECONDS:-15/);
+  assert.equal([...liveRunner.matchAll(/sleep "\$scenario_cooldown_seconds"/g)].length, 2);
   assert.match(mock, /bridge_assert_zero_claude_egress/);
   assert.ok([...verifier.matchAll(/bridge_reset_claude_egress_audit/g)].length >= 2);
 });
