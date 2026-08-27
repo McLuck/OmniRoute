@@ -24,6 +24,7 @@ import { buildAuthHeaders } from "../config/registryUtils.ts";
 import { kieExecutor } from "../executors/kie.ts";
 import { vertexTranscribe } from "../executors/vertexMedia.ts";
 import { errorResponse } from "../utils/error.ts";
+import { isJsonObject } from "../utils/kieTask.ts";
 import { handleOpenRouterTranscription } from "./openrouterTranscription.ts";
 
 type TranscriptionCredentials = {
@@ -393,6 +394,18 @@ async function handleHuggingFaceTranscription(providerConfig, file, modelId, tok
 /**
  * Handle Kie.ai transcription
  */
+function normalizeKieTranscriptionText(recordData: unknown): string {
+  const record = isJsonObject(recordData) ? recordData : {};
+  const data = isJsonObject(record.data) ? record.data : {};
+  const response = isJsonObject(data.response) ? data.response : {};
+
+  for (const value of [response.text, data.resultText, data.text, record.text]) {
+    if (typeof value === "string") return value;
+  }
+
+  return "";
+}
+
 async function handleKieAudioTranscription(providerConfig, file, modelId, token) {
   const baseUrl = providerConfig.baseUrl.replace(/\/$/, "");
   const fileBuffer = await file.arrayBuffer();
@@ -456,12 +469,7 @@ async function pollKieTranscriptionResult(baseUrl, modelId, taskId, token) {
     });
 
     if (state === "success") {
-      const text =
-        data?.data?.response?.text ||
-        data?.data?.resultText ||
-        data?.data?.text ||
-        data?.text ||
-        "";
+      const text = normalizeKieTranscriptionText(data);
       return Response.json({ text }, { headers: { ...CORS_HEADERS } });
     }
   } catch (err: unknown) {

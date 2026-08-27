@@ -1,1 +1,0 @@
-- chore(validation): decompose `src/lib/providers/validation.ts` (→ 442 lines) by extracting the web-cookie, kiro and specialty inline validators into `validation/*` leaves — behavior-preserving move; the specialty validators that captured `isLocal` from the enclosing closure now take it as an explicit parameter, with the host dispatcher passing it at each call site

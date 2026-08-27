@@ -19,6 +19,7 @@ import {
   formatSSE,
   unwrapGeminiChunk,
   appendBoundedText,
+  buildSyntheticChatChunk,
   hasActiveDeltaValue,
 } from "./streamHelpers.ts";
 import { calculateCost } from "@/lib/usage/costCalculator";
@@ -61,6 +62,7 @@ import {
   getUnsupportedReasoningValue,
   hasUnsupportedReasoningSignal,
 } from "./reasoningFields.ts";
+import { applyThinkTag, flushThink, initThinkState } from "./thinkTagParser.ts";
 
 /**
  * Race a response body read against a timeout.
@@ -744,6 +746,7 @@ export function createSSEStream(options: StreamOptions = {}) {
   let passthroughToolCallSeq = 0;
   const allowedToolNames = extractAllowedToolNames(body);
   let skipPassthroughEvent = false;
+  const thinkState = initThinkState(mode === STREAM_MODE.PASSTHROUGH, provider, model);
 
   // State for translate mode (accumulatedContent for call log response body)
   const state: TranslateState | null =
@@ -1728,6 +1731,7 @@ export function createSSEStream(options: StreamOptions = {}) {
                   let textualToolCallConverted = false;
                   let toolCallIdCoerced = false;
                   let splitMixedReasoningContent = false;
+                  const thinkParsed = applyThinkTag(thinkState, delta);
 
                   // Split combined reasoning+content deltas into separate SSE events.
                   // Standard OpenAI streaming never mixes both fields in one delta;
@@ -1767,6 +1771,7 @@ export function createSSEStream(options: StreamOptions = {}) {
                   // to avoid blocking subsequent finish_reason / usage mutations)
                   const needsReserialization =
                     splitMixedReasoningContent ||
+                    thinkParsed ||
                     hadReasoningAlias ||
                     (delta?.content === "" && delta?.reasoning_content);
 
@@ -2360,21 +2365,9 @@ export function createSSEStream(options: StreamOptions = {}) {
                 };
                 flushOutput = `data: ${JSON.stringify(syntheticChunk)}\n\n`;
               } else {
-                const syntheticChunk = {
-                  id: passthroughResponsesId || `chatcmpl-${Date.now()}`,
-                  object: "chat.completion.chunk",
-                  created: Math.floor(Date.now() / 1000),
-                  model: model || "unknown",
-                  choices: [
-                    {
-                      index: 0,
-                      delta: {
-                        content: passthroughBufferedTextualToolCallContent,
-                      },
-                      finish_reason: null,
-                    },
-                  ],
-                };
+                const syntheticChunk = buildSyntheticChatChunk(passthroughResponsesId, model, {
+                  content: passthroughBufferedTextualToolCallContent,
+                });
                 flushOutput = `data: ${JSON.stringify(syntheticChunk)}\n\n`;
               }
               reqLogger?.appendConvertedChunk?.(flushOutput);
@@ -2384,6 +2377,18 @@ export function createSSEStream(options: StreamOptions = {}) {
                 passthroughBufferedTextualToolCallContent
               );
               passthroughBufferedTextualToolCallContent = "";
+            }
+
+            const accR = passthroughAccumulatedReasoning;
+            const accC = passthroughAccumulatedContent;
+            const thinkFlush = flushThink(thinkState, passthroughResponsesId, accR, accC);
+            if (thinkFlush) {
+              passthroughAccumulatedReasoning = thinkFlush.reasoning;
+              passthroughAccumulatedContent = thinkFlush.content;
+              totalContentLength += thinkFlush.addedLength;
+              clientPayloadCollector.push(thinkFlush.syntheticChunk);
+              reqLogger?.appendConvertedChunk?.(thinkFlush.flushOutput);
+              controller.enqueue(encoder.encode(thinkFlush.flushOutput));
             }
 
             // Estimate usage if provider didn't return valid usage
@@ -2409,19 +2414,12 @@ export function createSSEStream(options: StreamOptions = {}) {
               // (pi CLI) reject the stream with "Stream ended without finish_reason".
               // Synthesize a terminal chunk when the upstream omitted one.
               if (shouldEmitDoneTerminator && !passthroughSawFinishReason) {
-                const syntheticFinishChunk = {
-                  id: passthroughResponsesId || `chatcmpl-${Date.now()}`,
-                  object: "chat.completion.chunk",
-                  created: Math.floor(Date.now() / 1000),
-                  model: model || "unknown",
-                  choices: [
-                    {
-                      index: 0,
-                      delta: {},
-                      finish_reason: passthroughHasToolCalls ? "tool_calls" : "stop",
-                    },
-                  ],
-                };
+                const syntheticFinishChunk = buildSyntheticChatChunk(
+                  passthroughResponsesId,
+                  model,
+                  {},
+                  passthroughHasToolCalls ? "tool_calls" : "stop"
+                );
                 const finishOutput = `data: ${JSON.stringify(syntheticFinishChunk)}\n\n`;
                 reqLogger?.appendConvertedChunk?.(finishOutput);
                 controller.enqueue(encoder.encode(finishOutput));

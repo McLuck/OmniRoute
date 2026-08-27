@@ -5,7 +5,6 @@ import { useTranslations } from "next-intl";
 import Modal from "./Modal";
 import Button from "./Button";
 import Input from "./Input";
-import LinkifiedText from "./LinkifiedText";
 import {
   OAuthDeviceCodePanel,
   OAuthLoopbackMismatchPanel,
@@ -18,6 +17,9 @@ import {
   parseCodexSessionJson,
 } from "@/lib/oauth/utils/codexSessionImport";
 import GheConfigStep from "@/shared/components/oauthModal/GheConfigStep";
+import GitlabDuoSetupStep from "@/shared/components/oauthModal/GitlabDuoSetupStep";
+import OAuthErrorStep from "@/shared/components/oauthModal/OAuthErrorStep";
+import OAuthWaitingStep from "@/shared/components/oauthModal/OAuthWaitingStep";
 import { parseGrokCliPasteToken } from "@/lib/oauth/utils/grokCliAuthJson";
 import { buildGoogleLoopbackHint } from "@/lib/oauth/utils/googleLoopbackHint";
 import {
@@ -667,6 +669,8 @@ export default function OAuthModal({
     if (!isOpen || !provider || flowStartedRef.current) return;
     flowStartedRef.current = true;
     const startsInPasteMode = IMPORT_TOKEN_ONLY_PROVIDERS.has(provider);
+    // #8688: show GitLab Duo OAuth app / env setup before authorize error.
+    const startsInGitlabDuoSetup = provider === "gitlab-duo";
     setShowPasteToken(startsInPasteMode);
     setGrokBrowserMode(false);
     setAuthData(null);
@@ -675,6 +679,10 @@ export default function OAuthModal({
     setIsDeviceCode(false);
     setDeviceData(null);
     setPolling(false);
+    if (startsInGitlabDuoSetup) {
+      setStep("gitlab-duo-setup");
+      return;
+    }
     if (!startsInPasteMode) startOAuthFlow();
   }, [isOpen, provider, startOAuthFlow]);
 
@@ -1028,21 +1036,18 @@ export default function OAuthModal({
               />
             )}
 
-            {/* Waiting Step (Localhost - popup mode) */}
+            {provider === "gitlab-duo" && step === "gitlab-duo-setup" && (
+              <GitlabDuoSetupStep onContinue={() => void startOAuthFlow()} onClose={handleClose} />
+            )}
+
             {step === "waiting" && !isDeviceCode && (
-              <div className="text-center py-6">
-                <div className="size-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-3xl text-primary animate-spin">
-                    progress_activity
-                  </span>
-                </div>
-                <h3 className="text-lg font-semibold mb-2">{t("waiting")}</h3>
-                <p className="text-sm text-text-muted mb-2">{t("completeAuthInPopup")}</p>
-                <p className="text-xs text-text-muted mb-4 opacity-70">{t("popupClosedHint")}</p>
-                <Button variant="ghost" onClick={() => setStep("input")}>
-                  {t("popupBlocked")}
-                </Button>
-              </div>
+              <OAuthWaitingStep
+                waitingLabel={t("waiting")}
+                completeAuthLabel={t("completeAuthInPopup")}
+                popupClosedHint={t("popupClosedHint")}
+                popupBlockedLabel={t("popupBlocked")}
+                onManualInput={() => setStep("input")}
+              />
             )}
 
             {/* Device Code Flow - Waiting */}
@@ -1096,9 +1101,7 @@ export default function OAuthModal({
           </div>
         )}
 
-        {/* LAN-IP loopback mismatch (#8046) — a dedicated, actionable panel rather
-            than the generic red error step: retrying this origin cannot succeed, so
-            the space goes to the diagnosis + the copy-pasteable tunnel command. */}
+        {/* LAN-IP loopback mismatch (#8046) — dedicated panel; retrying this origin cannot succeed. */}
         {step === "loopback-mismatch" && loopbackHint && !showPasteToken && (
           <OAuthLoopbackMismatchPanel
             providerName={providerInfo.name}
@@ -1107,25 +1110,20 @@ export default function OAuthModal({
           />
         )}
 
-        {/* Error Step — OAuth errors only; paste-token errors shown inline */}
         {step === "error" && !showPasteToken && (
-          <div className="text-center py-6">
-            <div className="size-16 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-              <span className="material-symbols-outlined text-3xl text-red-600">error</span>
-            </div>
-            <h3 className="text-lg font-semibold mb-2">{t("error")}</h3>
-            <p className="text-sm text-red-600 mb-4">
-              <LinkifiedText text={error} />
-            </p>
-            <div className="flex gap-2">
-              <Button onClick={() => startOAuthFlow()} variant="secondary" fullWidth>
-                {t("tryAgain")}
-              </Button>
-              <Button onClick={handleClose} variant="ghost" fullWidth>
-                {t("cancel")}
-              </Button>
-            </div>
-          </div>
+          <OAuthErrorStep
+            error={error}
+            errorTitle={t("error")}
+            tryAgainLabel={t("tryAgain")}
+            cancelLabel={t("cancel")}
+            returnToGitlabDuoSetup={provider === "gitlab-duo"}
+            onReturnToGitlabDuoSetup={() => {
+              setError(null);
+              setStep("gitlab-duo-setup");
+            }}
+            onTryAgain={() => void startOAuthFlow()}
+            onClose={handleClose}
+          />
         )}
       </div>
     </Modal>

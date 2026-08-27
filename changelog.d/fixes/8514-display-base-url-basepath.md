@@ -1,1 +1,0 @@
-- **fix(dashboard):** Endpoint/API base URL display honors `OMNIROUTE_BASE_PATH` (e.g. `https://host/omniroute/v1` instead of `https://host/v1` under reverse-proxy subpath deploys) ([#8514](https://github.com/diegosouzapw/OmniRoute/pull/8514)) — thanks @rqzbeh

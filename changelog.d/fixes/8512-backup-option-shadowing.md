@@ -1,1 +1,0 @@
-- fix(cli): `backup create` / `backup auto enable` — option shadowing by the parent `backup` command removed; all flags (`--cloud`, `--encrypt`, `--retention`, `--name`, `--exclude`, `--key-file`) now reach the subcommand handler with their actual values instead of being silently discarded

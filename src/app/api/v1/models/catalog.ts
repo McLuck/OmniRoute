@@ -12,12 +12,6 @@ import {
 } from "@/lib/localDb";
 import { createLazyConnectionView } from "@/lib/db/providers/lazyConnectionView";
 import { extractAliasBackedModels } from "./aliasBackedModels";
-import { appendNoThinkingVariants } from "@omniroute/open-sse/utils/noThinkingAlias";
-import { appendClaudeEffortVariants } from "@omniroute/open-sse/utils/claudeEffortVariants";
-import { appendSyncedEffortVariants } from "@omniroute/open-sse/utils/syncedEffortVariants";
-import { appendCcDiscoveryAliases } from "@omniroute/open-sse/utils/ccDiscoveryAliases";
-import { isCcAliasGlobalEnabled, getCcAliasSettingsBulk } from "@/lib/db/ccDiscoveryAliases";
-import { buildCcAliasPredicate } from "./ccAliasPredicate";
 import { buildSyncedCapabilities, mergeSyncedCapabilities } from "./syncedCapabilities";
 import { getAllEmbeddingModels } from "@omniroute/open-sse/config/embeddingRegistry";
 import {
@@ -47,18 +41,13 @@ import { getOpenRouterCatalog } from "@/lib/catalog/openrouterCatalog";
 import { hasEligibleConnectionForModel } from "@/domain/connectionModelRules";
 import {
   INTERNAL_PROXY_ERROR,
-  enrichCatalogModelEntry,
   getCanonicalModelMetadata,
   getCatalogDiagnosticsHeaders,
-  disambiguateCatalogModelNames,
 } from "@/lib/modelMetadataRegistry";
 import { getSyncedCapability } from "@/lib/modelsDevSync";
 import { getModelSpec } from "@/shared/constants/modelSpecs";
-import {
-  isModelCatalogNamesEnabled,
-  getModelsCatalogPrefixMode,
-} from "@/shared/utils/featureFlags";
-import { dedupeExactCatalogIds } from "./catalogDedupe";
+import { getModelsCatalogPrefixMode } from "@/shared/utils/featureFlags";
+import { applyCatalogPostFilters, finalizeCatalogResponse } from "./catalogResponse";
 import {
   isNoAuthProviderBlocked,
   isNoAuthProviderKey,
@@ -539,6 +528,38 @@ async function buildUnifiedModelsResponseCore(
     const timestamp = Math.floor(Date.now() / 1000);
     const listedIds = new Set<string>();
 
+    // #8770 follow-up: a quota-exclusive key (allowedQuotas non-empty) only ever
+    // receives the pool's `qtSd/*` combos — the key-permission step further down
+    // discards the entire catalog for it. Building that catalog first costs ~1.2s
+    // of CPU on a 1 vCPU host (measured), enough for Claude Code's 3s gateway model
+    // discovery to time out under contention, and every byte of it is thrown away.
+    // Everything the quota path needs (`combos`, `timestamp`,
+    // `buildComboCatalogMetadata`) already exists here, so return before the
+    // provider/auto-combo/registry loops start.
+    const earlyApiKey = extractApiKey(request);
+    if (earlyApiKey) {
+      const { getApiKeyMetadata } = await import("@/lib/db/apiKeys");
+      const earlyKeyMeta = await getApiKeyMetadata(earlyApiKey);
+      if (earlyKeyMeta?.allowedQuotas && earlyKeyMeta.allowedQuotas.length > 0) {
+        const { buildQuotaExclusiveModels } = await import("@/lib/quota/quotaCombos");
+        const quotaModels = await buildQuotaExclusiveModels(
+          earlyKeyMeta.allowedQuotas,
+          combos,
+          timestamp,
+          (c) => buildComboCatalogMetadata(c, combos)
+        );
+        const quotaFinal = applyCatalogPostFilters(request, quotaModels, {
+          connections,
+          prefixMode,
+          aliasToProviderId,
+        });
+        return finalizeCatalogResponse(request, quotaFinal, () => undefined, {
+          ...corsHeaders,
+          ...diagnosticHeaders,
+        });
+      }
+    }
+
     // #4164: advertise the built-in zero-setup `auto/*` combos at the very top.
     // #4189: enrich each with the combo's advertised context/output limits (computed
     // by createBuiltinAutoCombo from its candidate pool) + baseline capabilities, so
@@ -641,6 +662,18 @@ async function buildUnifiedModelsResponseCore(
         return Array.isArray(models) && models.length > 0;
       })
     );
+    const isRegisteredEffortVariant = (
+      providerModels: Array<{ id: string }>,
+      modelId: string
+    ): boolean => {
+      for (const suffix of ["none", "low", "medium", "high", "max", "xhigh"]) {
+        const suffixWithSeparator = `-${suffix}`;
+        if (!modelId.endsWith(suffixWithSeparator)) continue;
+        const baseModelId = modelId.slice(0, -suffixWithSeparator.length);
+        return providerModels.some((candidate) => candidate.id === baseModelId);
+      }
+      return false;
+    };
 
     // Add provider models (chat)
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
@@ -659,9 +692,14 @@ async function buildUnifiedModelsResponseCore(
         continue;
       }
 
-      if (providersWithSyncedModels.has(canonicalProviderId)) continue;
-
       for (const model of providerModels) {
+        // Synced models replace static base entries, but they do not carry aliases
+        // registered for provider-specific reasoning variants.
+        if (
+          providersWithSyncedModels.has(canonicalProviderId) &&
+          !isRegisteredEffortVariant(providerModels, model.id)
+        )
+          continue;
         if (!providerSupportsModel(canonicalProviderId, model.id)) continue;
         const aliasId = `${alias}/${model.id}`;
         if (getModelIsHidden(canonicalProviderId, model.id)) continue;
@@ -1410,62 +1448,11 @@ async function buildUnifiedModelsResponseCore(
       }
     }
     // ?configuredOnly — hide models that have no eligible DB connection.
-    // Applied after the API-key filter so the key filter runs first, then
-    // variants are only generated for surviving models.
-    if (new URL(request.url).searchParams.get("configuredOnly") === "true") {
-      finalModels = finalModels.filter((m) => {
-        if (!m.root) return true;
-        return hasEligibleConnectionForModel(connections, m.root);
-      });
-    }
-
-    // Advertise Claude reasoning-effort variants (claude/<model>-{low,medium,high[,xhigh]}).
-    // Derived from the already key-filtered list so a variant only appears when its real
-    // model is permitted. Runs before the no-thinking pass: the gateway already routes these
-    // suffixed ids (claudeEffortVariant.ts), this just makes them selectable in catalog-only
-    // clients (OpenCode) that can't set a reasoning_effort config the way VS Code does.
-    finalModels = appendClaudeEffortVariants(
-      finalModels,
-      prefixMode === "canonical" ? aliasToProviderId : undefined
-    );
-
-    // Advertise no-thinking gateway variants (Fase 8.1). Derived from the already
-    // key-filtered list, so a variant only appears when its real model is permitted.
-    finalModels = appendNoThinkingVariants(
-      finalModels,
-      prefixMode === "canonical" ? aliasToProviderId : undefined
-    );
-
-    // Advertise `claude/<id>` discovery-mirror aliases so Claude Code's gateway
-    // model discovery (which only lists `claude`/`anthropic`-prefixed ids) can see
-    // every model this gate allows. Gated 3 levels deep (global > provider > model,
-    // see ccDiscoveryAliases.ts) and default-off. Deliberately NOT filtered by model
-    // `type` here — non-chat entries (embedding/image/etc.) get a mirror too; the
-    // gate itself (default-off + explicit opt-in) is the operator's filter, not a
-    // hardcoded type allowlist.
-    const ccAliasGlobal = isCcAliasGlobalEnabled();
-    const ccAliasSettings = getCcAliasSettingsBulk();
-    if (ccAliasGlobal || ccAliasSettings.providers.size > 0 || ccAliasSettings.models.size > 0) {
-      finalModels = appendCcDiscoveryAliases(
-        finalModels,
-        buildCcAliasPredicate({
-          global: ccAliasGlobal,
-          providers: ccAliasSettings.providers,
-          models: ccAliasSettings.models,
-        })
-      );
-    }
-
-    // #7694: advertise `<provider>/<model>-<tier>` variants for synced models that
-    // captured `reasoning.supported_efforts` at sync time (capabilities.effort_tiers).
-    // Derived from the already key-filtered list; skips codex/kimi (own suffix mechanism).
-    finalModels = appendSyncedEffortVariants(finalModels);
-
-    // #4424 follow-up — drop exact-duplicate ids that slip through the per-source push
-    // guards (e.g. `codex/gpt-5.5`, `veo-free/seedance` listed twice). Keyed by listing
-    // identity (id, type, subtype) so the intentional same-id audio transcription/speech
-    // pair survives. Independent of MODELS_CATALOG_PREFIX_MODE; runs as the final guard.
-    finalModels = dedupeExactCatalogIds(finalModels);
+    finalModels = applyCatalogPostFilters(request, finalModels, {
+      connections,
+      prefixMode,
+      aliasToProviderId,
+    });
 
     const getDefaultContextFallback = (model: any): number | undefined => {
       if (typeof model.context_length === "number") return undefined;
@@ -1484,47 +1471,9 @@ async function buildUnifiedModelsResponseCore(
       return modelId ? getTokenLimit(canonicalId, modelId) : getTokenLimit(canonicalId);
     };
 
-    const includeModelNames = isModelCatalogNamesEnabled();
-    const enrichedModels = disambiguateCatalogModelNames(
-      finalModels.map((model) => {
-        if (model.owned_by === "combo") {
-          return maybeOmitCatalogModelName(model, includeModelNames);
-        }
-        const enriched = enrichCatalogModelEntry(model);
-        const fallbackContextLength = getDefaultContextFallback(enriched);
-        const listedModel = fallbackContextLength
-          ? { ...enriched, context_length: fallbackContextLength }
-          : enriched;
-        return maybeOmitCatalogModelName(listedModel, includeModelNames);
-      })
-    );
-    // Codex CLI compatibility: its model-catalog refresh (codex_models_manager) does
-    // GET /v1/models?client_version=<v> and decodes a JSON object with a TOP-LEVEL
-    // `models` array, so the OpenAI-standard `{object,data}` shape makes it fail with
-    // "missing field `models`" and log "failed to refresh available models" on every
-    // startup. For codex clients only (detected by the codex originator/user-agent) we add
-    // an EMPTY `models: []` so the decode succeeds and the error disappears. Every other
-    // OpenAI consumer keeps the byte-identical `{object,data}` response.
-    //
-    // We deliberately keep it EMPTY rather than mirroring the catalog: codex replaces its
-    // built-in per-model agent prompt (`base_instructions`, ~21k chars) with whatever a
-    // populated entry carries for the selected model, so emitting our models with an
-    // empty/foreign `base_instructions` would drop codex's agent prompt to nothing and
-    // break its agent behavior (verified empirically against codex 0.137). An empty array
-    // keeps codex on its built-in model info — same inference as today, minus the error.
-    const responseBody: Record<string, unknown> = {
-      object: "list",
-      data: enrichedModels,
-    };
-    if (isCodexModelCatalogClient(request)) {
-      responseBody.models = [];
-    }
-
-    return Response.json(responseBody, {
-      headers: {
-        ...corsHeaders,
-        ...diagnosticHeaders,
-      },
+    return finalizeCatalogResponse(request, finalModels, getDefaultContextFallback, {
+      ...corsHeaders,
+      ...diagnosticHeaders,
     });
   } catch (error) {
     console.log("Error fetching models:", error);

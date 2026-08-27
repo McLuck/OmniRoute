@@ -1,1 +1,0 @@
-- feat(jobs): `backup auto enable` schedule is now executed server-side — the cron expression, cloud/encrypt/retention settings written by the CLI are consumed by a new `startBackupScheduleJob()` tick registered alongside `startBudgetResetJob()` in `instrumentation-node.ts`; includes a zero-dependency 5-field cron matcher

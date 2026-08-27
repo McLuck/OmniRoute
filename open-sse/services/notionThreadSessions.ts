@@ -7,7 +7,7 @@
  * `executors/notion-web.ts` for the upstream transcript/response translation
  * that consumes this module.
  *
- * - History-keyed in-memory session cache (spaceId + conversation prefix hash),
+ * - Space-keyed sticky root cache plus history-prefix fallbacks,
  *   backed by an on-disk snapshot under DATA_DIR so continuity survives restarts.
  * - Sticky root binding written *before* the upstream call so error retries never
  *   mint a second Notion chat for the same conversation.
@@ -54,7 +54,7 @@ export function extractNotionMessageText(content: unknown): string {
   return parts.join("\n");
 }
 
-const THREAD_SESSION_MAX_AGE_MS = 6 * 3600_000; // 6h — agent tool loops can be long
+const THREAD_SESSION_MAX_AGE_MS = 7 * 24 * 3600_000; // 7d — agent/browser-web sessions can span long workflows
 const THREAD_SESSION_MAX_ENTRIES = 500;
 
 interface ThreadSessionEntry {
@@ -78,6 +78,8 @@ function getThreadStorePath(): string | null {
       process.env.DATA_DIR ||
       process.env.OMNIROUTE_DATA_DIR ||
       process.env.VIBEPROXY_DATA_DIR ||
+      (process.env.USERPROFILE ? join(process.env.USERPROFILE, ".omniroute") : "") ||
+      (process.env.HOME ? join(process.env.HOME, ".omniroute") : "") ||
       "";
     if (!dataDir) return null;
     return join(dataDir, "notion-web-thread-sessions.json");
@@ -260,11 +262,20 @@ function putThreadSession(
   scheduleThreadStoreFlush();
 }
 
-/** Root sticky key for a conversation (space/agent + first user turn). */
+/** Root sticky key for web-provider continuity.
+ *
+ * Some clients (Claude extension, Codex-like agents, local automation gateways)
+ * call Notion Web as stateless single-turn requests but expect one visible web
+ * session. Keying the optimistic create binding by the first user prompt causes
+ * every new request to mint another Notion sidebar chat ("No user query
+ * provided", auto-generated titles, etc.). Scope the root binding to the caller
+ * namespace prepared by the executor (`caller:<cookieHash>|<spaceId>|wf:<id>`)
+ * so normal prompts reuse one active Notion thread unless the client explicitly
+ * pins a different `notion_thread_id` / `X-Notion-Thread-Id`.
+ */
 export function notionThreadRootKey(spaceKey: string, messages: NotionMessage[]): string | null {
-  const first = firstUserMessage(messages);
-  if (!first) return null;
-  return `root:${hashNotionConversation(spaceKey, [first])}`;
+  void messages;
+  return spaceKey ? `root:space:${spaceKey}` : null;
 }
 
 /**
@@ -389,14 +400,6 @@ export function notionThreadMarkCreateAttempted(rootKey: string | null, threadId
 export function notionThreadMarkConfirmed(rootKey: string | null, threadId: string): void {
   if (!rootKey || !threadId) return;
   putThreadSession(rootKey, threadId, { createAttempted: true, confirmed: true });
-}
-
-function firstUserMessage(messages: NotionMessage[]): NotionMessage | null {
-  for (const m of messages) {
-    const role = (m?.role || "").toLowerCase();
-    if (role === "user" || role === "human") return m;
-  }
-  return null;
 }
 
 function conversationHasAssistant(messages: NotionMessage[]): boolean {

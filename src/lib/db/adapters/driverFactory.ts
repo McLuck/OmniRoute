@@ -10,6 +10,17 @@ import type { SqliteAdapter } from "./types";
 
 const _require = createRequire(import.meta.url);
 
+type DriverLoader = (moduleName: string) => unknown;
+
+type NodeSqliteOptions = {
+  readOnly?: boolean;
+};
+
+function toNodeSqliteOptions(options?: Record<string, unknown>): NodeSqliteOptions | undefined {
+  if (options?.readonly !== true) return undefined;
+  return { readOnly: true };
+}
+
 /**
  * Logs the underlying cause of a swallowed sync-driver failure (#7288
  * secondary finding). tryOpenSync() used to swallow both driver errors in
@@ -67,69 +78,81 @@ function getSqlJsPendingCache(): Map<string, Promise<SqliteAdapter>> {
   return globalThis.__omnirouteSqlJsInitPromises;
 }
 
-/** Tenta abrir com better-sqlite3 e node:sqlite sincronamente. Retorna null se ambos falharem. */
-export function tryOpenSync(
-  filePath: string,
-  options?: Record<string, unknown>
-): SqliteAdapter | null {
-  // Bun ships a supported SQLite implementation. Prefer it over the native
-  // Node addon, which Bun intentionally skips because its ABI is incompatible.
-  if (process.versions.bun) {
-    try {
-      const { Database } = _require("bun:sqlite") as {
-        Database: new (p: string, options?: Record<string, unknown>) => BunSqliteDatabaseLike;
-      };
-      if (
-        options?.fileMustExist === true &&
-        filePath !== ":memory:" &&
-        !existsSync(filePath)
-      ) {
-        throw new Error(`SQLite file does not exist: ${filePath}`);
-      }
-      const db = new Database(filePath, {
-        ...(options?.readonly === true
-          ? { readonly: true }
-          : { readwrite: true, create: options?.fileMustExist !== true }),
-      });
-      return createBunSqliteAdapter(db, filePath);
-    } catch (err) {
-      logSwallowedDriverError("bun:sqlite", err);
-    }
-  }
-
-  // better-sqlite3: rápido, nativo — skip em Bun
-  if (!process.versions.bun) {
-    try {
-      const BetterSqlite = _require("better-sqlite3") as {
-        new (p: string, o?: object): import("better-sqlite3").Database;
-      };
-      const db = new BetterSqlite(filePath, options);
-      return createBetterSqliteAdapter(db);
-    } catch (err) {
-      // continua para próximo driver
-      logSwallowedDriverError("better-sqlite3", err);
-    }
-  }
-
-  // node:sqlite: built-in desde Node 22.5 — skip em Bun
-  if (!process.versions.bun) {
-    const [maj, min] = (process.versions.node ?? "0.0").split(".").map(Number);
-    if (maj > 22 || (maj === 22 && min >= 5)) {
+/**
+ * @internal
+ *
+ * Builds the synchronous driver cascade. Keeping the loader injectable makes
+ * the real node:sqlite branch testable without changing the public adapter API.
+ */
+export function createSyncDriverFactory(load: DriverLoader) {
+  return function tryOpenSync(
+    filePath: string,
+    options?: Record<string, unknown>
+  ): SqliteAdapter | null {
+    // Bun ships a supported SQLite implementation. Prefer it over the native
+    // Node addon, which Bun intentionally skips because its ABI is incompatible.
+    if (process.versions.bun) {
       try {
-        const { DatabaseSync } = _require("node:sqlite") as {
-          DatabaseSync: new (p: string) => NodeSqliteDatabaseLike;
+        const { Database } = load("bun:sqlite") as {
+          Database: new (p: string, options?: Record<string, unknown>) => BunSqliteDatabaseLike;
         };
-        const db = new DatabaseSync(filePath);
-        return createNodeSqliteAdapterFromDatabase(db, filePath);
+        if (options?.fileMustExist === true && filePath !== ":memory:" && !existsSync(filePath)) {
+          throw new Error(`SQLite file does not exist: ${filePath}`);
+        }
+        const db = new Database(filePath, {
+          ...(options?.readonly === true
+            ? { readonly: true }
+            : { readwrite: true, create: options?.fileMustExist !== true }),
+        });
+        return createBunSqliteAdapter(db, filePath);
       } catch (err) {
-        // continua
-        logSwallowedDriverError("node:sqlite", err);
+        logSwallowedDriverError("bun:sqlite", err);
       }
     }
-  }
 
-  return null;
+    // better-sqlite3: rápido, nativo — skip em Bun
+    if (!process.versions.bun) {
+      try {
+        const BetterSqlite = load("better-sqlite3") as {
+          new (p: string, o?: object): import("better-sqlite3").Database;
+        };
+        const db = new BetterSqlite(filePath, options);
+        return createBetterSqliteAdapter(db);
+      } catch (err) {
+        // continua para próximo driver
+        logSwallowedDriverError("better-sqlite3", err);
+      }
+    }
+
+    // node:sqlite: built-in desde Node 22.5 — skip em Bun
+    if (!process.versions.bun) {
+      const [maj, min] = (process.versions.node ?? "0.0").split(".").map(Number);
+      if (maj > 22 || (maj === 22 && min >= 5)) {
+        try {
+          if (options?.fileMustExist === true && filePath !== ":memory:" && !existsSync(filePath)) {
+            throw new Error(`SQLite file does not exist: ${filePath}`);
+          }
+          const { DatabaseSync } = load("node:sqlite") as {
+            DatabaseSync: new (p: string, options?: NodeSqliteOptions) => NodeSqliteDatabaseLike;
+          };
+          const nodeOptions = toNodeSqliteOptions(options);
+          const db = nodeOptions
+            ? new DatabaseSync(filePath, nodeOptions)
+            : new DatabaseSync(filePath);
+          return createNodeSqliteAdapterFromDatabase(db, filePath);
+        } catch (err) {
+          // continua
+          logSwallowedDriverError("node:sqlite", err);
+        }
+      }
+    }
+
+    return null;
+  };
 }
+
+/** Tenta abrir com better-sqlite3 e node:sqlite sincronamente. Retorna null se ambos falharem. */
+export const tryOpenSync = createSyncDriverFactory(_require);
 
 /**
  * Pré-inicializa sql.js para um filePath.

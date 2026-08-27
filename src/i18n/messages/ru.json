@@ -937,7 +937,7 @@
   "disabled": "Отключено",
   "featureFlagOmnirouteEmergencyFallbackDescription": "Перенаправлять запросы при исчерпании бюджета на резервный бесплатный провайдер/модель.",
   "featureFlagArenaEloSyncEnabledDescription": "Включить периодическую синхронизацию ELO из таблицы лидеров Arena AI для рейтинга интеллектуальности моделей.",
-  "featureFlagExposeCcDiscoveryAliasesDescription": "__MISSING__:Advertise claude/<provider>/<model> mirror ids on /v1/models so Claude Code gateway model discovery lists non-Claude models. Warning: doubles catalog entries for all clients when enabled globally.",
+  "featureFlagExposeCcDiscoveryAliasesDescription": "__MISSING__:Advertise claude/&lt;provider&gt;/&lt;model&gt; mirror ids on /v1/models so Claude Code gateway model discovery lists non-Claude models. Warning: doubles catalog entries for all clients when enabled globally.",
   "sidebar": {
     "home": "Главная",
     "dashboard": "Панель управления",
@@ -2947,7 +2947,7 @@
     "wireApiChatCompletions": "Завершения чата (/chat/completions)",
     "wireApiResponses": "API ответов (/responses)",
     "ccDiscoveryInfoButton": "__MISSING__:How to enable discovery in Claude Code",
-    "ccDiscoveryInfoTooltip": "__MISSING__:Advertise non-Claude models under claude/<provider>/<model> mirror ids so Claude Code's gateway model discovery can list them. Doubles catalog entries for all clients when enabled globally.",
+    "ccDiscoveryInfoTooltip": "__MISSING__:Advertise non-Claude models under claude/&lt;provider&gt;/&lt;model&gt; mirror ids so Claude Code's gateway model discovery can list them. Doubles catalog entries for all clients when enabled globally.",
     "ccDiscoveryInfoLink": "__MISSING__:Open Feature Flags",
     "ccOnboardingTitle": "__MISSING__:settings.json for gateway model discovery",
     "ccOnboardingCopy": "__MISSING__:Copy",
@@ -3704,7 +3704,7 @@
     "modelsCount": "{count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
     "sectionTitle": "Интерфейс интеграции",
     "sectionDescription": "API, совместимые с OpenAI, и конечные точки операционных протоколов",
-    "tabApis": "OpenAI-совместимые API",
+    "tabApis": "__MISSING__:APIs",
     "tabProtocols": "Протоколы",
     "tabsAria": "Разделы конечной точки",
     "protocolsTitle": "Протоколы",
@@ -5409,8 +5409,8 @@
     "t3ChatWebCookieHint": "Откройте t3.chat → DevTools → Приложение → Локальное хранилище → https://t3.chat, скопируйте «convex-session-id». Затем откройте DevTools → Network и скопируйте полный заголовок Cookie из любого запроса в чате. Вставьте оба значения в поля ниже.",
     "t3ChatWebCookiePlaceholder": "выпуклый-session-id=abc123...",
     "grokWebCookieHint": "Grok Web Cookie Hint",
-    "blockClaudeExtraUsageDescription": "Block Claude Extra Usage Description",
-    "blockClaudeExtraUsageLabel": "Block Claude Extra Usage Label",
+    "blockClaudeExtraUsageDescription": "__MISSING__:When enabled, OmniRoute marks this Claude connection unavailable as soon as the usage API reports queued extra usage, so fallback switches to another connection instead of continuing on pay-as-you-go extra billing.",
+    "blockClaudeExtraUsageLabel": "__MISSING__:Block extra Claude usage",
     "disableCoolingDescription": "Пропускать временный кулдаун, чтобы это подключение оставалось доступным даже после устранимых ошибок (терминальные состояния, такие как banned/expired, по-прежнему применяются).",
     "disableCoolingLabel": "Отключить кулдаун для этого подключения",
     "bulkPasteAdded": "{count, plural, one {1 key added} other {# keys added}}",
@@ -5589,13 +5589,13 @@
     "importGrokAuth": "Импортировать авторизацию Grok Build",
     "zedImportTitle": "Импортировать из связки ключей Zed",
     "zedImportDescription": "Найти учетные данные провайдеров ИИ (OpenAI, Anthropic, Google, Mistral, xAI), сохраненные Zed IDE в связке ключей ОС, и импортировать их как подключения. На этом компьютере должна быть установлена Zed IDE.",
-    "zedImportButton": "Zed Import Button",
-    "zedImportFailed": "Zed Import Failed",
+    "zedImportButton": "__MISSING__:Import from Zed",
+    "zedImportFailed": "__MISSING__:Zed import failed",
     "zedImportHint": "Zed Import Hint",
     "zedImportNetworkError": "Zed Import Network Error",
     "zedImportNone": "Zed Import None",
-    "zedImportSuccess": "Zed Import Success",
-    "zedImporting": "Zed Importing",
+    "zedImportSuccess": "__MISSING__:Imported {credentials} credential(s) from Zed for {providers} provider(s)",
+    "zedImporting": "__MISSING__:Importing…",
     "zedNoCredentials": "В связке ключей не найдено учетных данных Zed",
     "zedUnsupportedCredentials": "Найдено {count} учетных записей в связке ключей, но ни одна не соответствует поддерживаемым провайдерам",
     "zedManualTitle": "Ручной импорт токена",
@@ -5978,7 +5978,7 @@
     "kimiOfficialSupporterTooltip": "Kimi (Moonshot AI) — друг-основатель открытого кода OmniRoute",
     "kimiPartnerLinkNote": "Партнерская ссылка — поддерживает OmniRoute без дополнительных затрат с вашей стороны",
     "ccAliasSectionTitle": "__MISSING__:Expose in Claude Code (claude/…)",
-    "ccAliasSectionHint": "__MISSING__:Advertise this provider's models under claude/<provider>/<model> mirror ids so Claude Code's gateway model discovery can list them. Off by default — enabling this doubles catalog entries for all clients.",
+    "ccAliasSectionHint": "__MISSING__:Advertise this provider's models under claude/&lt;provider&gt;/&lt;model&gt; mirror ids so Claude Code's gateway model discovery can list them. Off by default — enabling this doubles catalog entries for all clients.",
     "ccAliasProviderLevelLabel": "__MISSING__:Provider default",
     "ccAliasModelOverridesLabel": "__MISSING__:Per-model overrides",
     "ccAliasModelOverrideAriaLabel": "__MISSING__:Override for {modelId}",
@@ -6748,7 +6748,7 @@
     "howPricingWorks": "Как работает ценообразование",
     "cacheWrite": "Запись в кэш",
     "unsaved": "несохраненный",
-    "resetDefaults": "Сбросить настройки по умолчанию",
+    "resetDefaults": "__MISSING__:Reset defaults",
     "saveProvider": "Сохранить поставщика",
     "model": "Модель",
     "models": "модели",
@@ -7297,6 +7297,10 @@
       "less-code": {
         "label": "Меньше кода",
         "description": "Лестница YAGNI: минимальное рабочее изменение, никаких незапрошенных абстракций."
+      },
+      "ponytail": {
+        "label": "Ponytail (lazy senior dev)",
+        "description": "Lazy senior-dev discipline: climb the YAGNI ladder, fix root cause, smallest working diff."
       },
       "terse-cjk": {
         "label": "Краткий CJK (文言)",
@@ -10518,7 +10522,9 @@
     "deleteGroupConfirm": "Удалить эту группу? Сначала необходимо переназначить или удалить её пулы.",
     "deleteGroupHasPools": "В этой группе все еще есть пулы — сначала переназначьте или удалите их.",
     "ungroupedTitle": "Не сгруппировано",
-    "ungroupedHint": "Эти пулы не назначены известной группе. Отредактируйте пул, чтобы переместить его в реальную группу."
+    "ungroupedHint": "Эти пулы не назначены известной группе. Отредактируйте пул, чтобы переместить его в реальную группу.",
+    "removeFailed": "Could not remove this pool.",
+    "dismiss": "Dismiss"
   },
   "plugins": {
     "title": "Plugins",
@@ -11316,7 +11322,7 @@
       }
     },
     "pageTitle": "Навыки агента",
-    "pageSubtitle": "Научите вашего агента работать с OmniRoute — 22 области API + 20 семейств CLI",
+    "pageSubtitle": "__MISSING__:Teach your agent to operate OmniRoute — 23 API areas + 21 CLI families",
     "conceptCard": {
       "agent": {
         "title": "Навыки агента — Исходящие",

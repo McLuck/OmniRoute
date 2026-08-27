@@ -1,1 +1,0 @@
-- fix(api): expose Responses-API-format (OpenAI/Codex) chat models on every VS Code Ollama-compatible listing route, not just `/models` (#7587)

@@ -156,6 +156,7 @@ export class DevinCliExecutor extends BaseExecutor {
         const child = spawn(devinBin, ["acp", "--agent-type", "summarizer"], {
           env,
           stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
           // On Windows, devin.exe may need shell resolution
           shell: process.platform === "win32",
         });

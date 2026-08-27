@@ -57,6 +57,31 @@ jobs:
           git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
           node scripts/quality/classify-pr-changes.mjs changed-files.txt >> "$GITHUB_OUTPUT"
 
+  build:
+    name: Build (advisory)
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || ((github.event.pull_request.draft == false || startsWith(github.head_ref, 'mergify/merge-queue/')) && needs.changes.outputs.code == 'true') }}
+    # Dynamic runner — same fork-safe rule as ci.yml / fast-gates.
+    runs-on: ${{ (vars.USE_VPS_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","omni-release"]') || 'ubuntu-latest' }}
+    # #7307: advisory for the first week of release-PR runs; remove
+    # continue-on-error after the production-build signal is stable.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.CI_NODE_VERSION }}
+          cache: npm
+      - uses: ./.github/actions/npm-ci-retry
+      - run: npm run check:node-runtime
+      - run: npm run build
+        env:
+          OMNIROUTE_USE_TURBOPACK: "1"
+      # No artifact upload here: the PR-to-release quality workflow has no
+      # downstream package/e2e jobs that consume the Next.js build output.
+
   # Docs/OpenAPI contract gates only — existence reason is doc accuracy + route refs.
   # Split out of fast-gates so pure-docs PRs skip typecheck/unit while still validating docs.
   docs-gates:
@@ -358,7 +383,7 @@ jobs:
       API_KEY_SECRET: ci-lint-api-key-secret-long
       DISABLE_SQLITE_AUTO_BACKUP: "true"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false

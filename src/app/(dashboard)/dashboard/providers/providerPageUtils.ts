@@ -13,7 +13,7 @@ import {
 } from "@/shared/constants/providers";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { providerHasServiceKind } from "@/lib/providers/serviceKindIndex";
-import { compareTr, matchesSearch } from "@/shared/utils/turkishText";
+import { compareTr, matchesAnyToken, matchesSearch } from "@/shared/utils/turkishText";
 import { fetchWithTimeout } from "@/shared/utils/fetchTimeout";
 import type { ProviderDisplayMode } from "./providerPageStorage";
 import { isFeaturedProviderId } from "./featuredProviders";
@@ -68,6 +68,23 @@ export function shouldShowFirstProviderHint(
   searchQuery?: string
 ): boolean {
   return connectionCount === 0 && !searchQuery?.trim();
+}
+
+export function syncSearchToUrl(searchQuery: string): void {
+  if (typeof window === "undefined") return;
+
+  const url = new URL(window.location.href);
+  const currentSearch = url.searchParams.get("search") || "";
+
+  if (searchQuery.trim()) {
+    if (currentSearch !== searchQuery) {
+      url.searchParams.set("search", searchQuery);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  } else if (url.searchParams.has("search")) {
+    url.searchParams.delete("search");
+    window.history.replaceState(window.history.state, "", url.toString());
+  }
 }
 
 export function shouldShowProviderSection(
@@ -325,8 +342,8 @@ export function filterConfiguredProviderEntries<TProvider>(
     filtered = filtered.filter((entry) => {
       const provider = entry.provider as Record<string, unknown>;
       return (
-        matchesSearch(String(provider.name || ""), searchQuery) ||
-        matchesSearch(entry.providerId, searchQuery)
+        matchesAnyToken(String(provider.name || ""), searchQuery) ||
+        matchesAnyToken(entry.providerId, searchQuery)
       );
     });
   }

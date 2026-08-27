@@ -1,1 +1,0 @@
-- **fix(kiro):** support profileless Builder ID quota, preserve CLI auth identity, stabilize social OAuth polling, and use the live model catalog ([#8565](https://github.com/diegosouzapw/OmniRoute/pull/8565)) — thanks @nguyenha935

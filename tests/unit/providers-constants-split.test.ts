@@ -15,7 +15,8 @@
 // #7887 (5 free-tier providers: ainative/aion/sealion/routeway/nara) to 187, then #8077 (clova-studio/
 // internlm/ant-ling, all regional) to 190, then #8161 (sarvam/writer/plamo — writer in frontier-labs,
 // sarvam+plamo in regional) to 193, then #8170 (inception/typhoon — inception in frontier-labs,
-// typhoon in regional) to 195.
+// typhoon in regional) to 195, then Firecrawl dual search+fetch under SEARCH_PROVIDERS.firecrawl
+// (removed specialty-media duplicate) to 194, and #8861 (Xiaomi MiMo Token Plan, regional) to 195.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 

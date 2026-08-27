@@ -16,6 +16,10 @@ import { getModelContextOverride } from "@/lib/db/modelContextOverrides";
 import { getModelCapabilityOverride } from "@/lib/db/modelCapabilityOverrides";
 import { isVisionModelId } from "@/shared/constants/visionModels";
 import { getUnsupportedParams } from "@omniroute/open-sse/config/providerRegistry.ts";
+import {
+  getLearnedThinkingCap,
+  GEMINI_FALLBACK_THINKING_CAP,
+} from "@omniroute/open-sse/services/learnedThinkingCaps.ts";
 
 const TOOL_CALLING_UNSUPPORTED_PATTERNS: string[] = [
   // Specialty / non-chat surfaces must never inherit optimistic tool defaults (#8016)
@@ -663,9 +667,46 @@ export function getDefaultThinkingBudget(input: CapabilityInput): number {
   return getResolvedModelCapabilities(input).defaultThinkingBudget;
 }
 
+/**
+ * Clamp a requested thinking budget to the model's real ceiling.
+ *
+ * Resolution order (lowest wins):
+ *  1. Registry cap (MODEL_SPECS.thinkingBudgetCap) — authoritative when present.
+ *  2. Learned cap — a lower ceiling previously discovered via an upstream 400
+ *     ("thinking_budget must be in the range ...") recorded by the executor
+ *     (open-sse/services/learnedThinkingCaps.ts). In-memory, per provider+model.
+ *  3. Gemini-family fallback — when the registry has no cap but the model id
+ *     contains "gemini" (any provider: many providers host Gemini models), clamp
+ *     to GEMINI_FALLBACK_THINKING_CAP (32768, the known pro-tier cap) instead of
+ *     letting an xhigh budget (131072) sail through to a 400. Registered flash
+ *     models already carry their explicit 24576 cap via rule 1, so this only
+ *     fires for unregistered Gemini ids.
+ */
 export function capThinkingBudget(input: CapabilityInput, budget: number): number {
-  const cap = getResolvedModelCapabilities(input).thinkingBudgetCap ?? budget;
-  return Math.min(budget, cap);
+  const resolved = getResolvedModelCapabilities(input);
+  let cap = resolved.thinkingBudgetCap;
+
+  const modelId = resolved.model ?? resolved.rawModel ?? "";
+  const modelLower = modelId.toLowerCase();
+  // Learned-cap lookup needs a concrete provider key (the executor records under
+  // `this.provider`). When the input is a bare Gemini id, `resolved.provider` is
+  // null — but bare Gemini ids always route to the native Gemini provider, so
+  // default to "gemini". Without this a cap learned via the executor would be
+  // invisible to bare-model callers. Provider-qualified inputs keep their own
+  // provider, preserving per-provider independence.
+  const providerForLearned =
+    resolved.provider ?? (modelLower.includes("gemini") ? "gemini" : null);
+
+  const learned = getLearnedThinkingCap(providerForLearned, modelId);
+  if (learned !== null) {
+    cap = cap === null ? learned : Math.min(cap, learned);
+  }
+
+  if (cap === null && modelLower.includes("gemini")) {
+    cap = GEMINI_FALLBACK_THINKING_CAP;
+  }
+
+  return Math.min(budget, cap ?? budget);
 }
 
 export function getModelContextLimit(

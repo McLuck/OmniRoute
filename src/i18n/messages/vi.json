@@ -937,7 +937,7 @@
   "disabled": "Đã tắt",
   "featureFlagOmnirouteEmergencyFallbackDescription": "Định tuyến các yêu cầu đã hết ngân sách đến nhà cung cấp/mô hình dự phòng khẩn cấp miễn phí.",
   "featureFlagArenaEloSyncEnabledDescription": "Bật đồng bộ ELO định kỳ từ bảng xếp hạng Arena AI để xếp hạng năng lực của mô hình.",
-  "featureFlagExposeCcDiscoveryAliasesDescription": "Công bố các id phản chiếu claude/<provider>/<model> trên /v1/models để tính năng khám phá mô hình qua gateway của Claude Code liệt kê được các mô hình không phải Claude. Cảnh báo: khi bật ở phạm vi toàn cục, số mục trong danh mục tăng gấp đôi với mọi client.",
+  "featureFlagExposeCcDiscoveryAliasesDescription": "Công bố các id phản chiếu claude/&lt;provider&gt;/&lt;model&gt; trên /v1/models để tính năng khám phá mô hình qua gateway của Claude Code liệt kê được các mô hình không phải Claude. Cảnh báo: khi bật ở phạm vi toàn cục, số mục trong danh mục tăng gấp đôi với mọi client.",
   "sidebar": {
     "home": "Trang chủ",
     "dashboard": "Trang tổng quan",
@@ -2969,7 +2969,7 @@
     "wireApiChatCompletions": "Chat Completions (/chat/completions)",
     "wireApiResponses": "Responses API (/responses)",
     "ccDiscoveryInfoButton": "Cách bật khám phá mô hình trong Claude Code",
-    "ccDiscoveryInfoTooltip": "Công bố các mô hình không phải Claude dưới dạng id phản chiếu claude/<provider>/<model> để tính năng khám phá mô hình qua gateway của Claude Code có thể liệt kê chúng. Khi bật ở phạm vi toàn cục, số mục trong danh mục tăng gấp đôi với mọi client.",
+    "ccDiscoveryInfoTooltip": "Công bố các mô hình không phải Claude dưới dạng id phản chiếu claude/&lt;provider&gt;/&lt;model&gt; để tính năng khám phá mô hình qua gateway của Claude Code có thể liệt kê chúng. Khi bật ở phạm vi toàn cục, số mục trong danh mục tăng gấp đôi với mọi client.",
     "ccDiscoveryInfoLink": "Mở Feature Flags",
     "ccOnboardingTitle": "settings.json cho việc khám phá mô hình qua gateway",
     "ccOnboardingCopy": "Sao chép",
@@ -5994,13 +5994,16 @@
     "doubaoWebDesc": "Trò chuyện AI của ByteDance qua dola.com",
     "overrideBaseUrlAdvanced": "Nâng cao: ghi đè URL cơ sở",
     "overrideBaseUrlHint": "Nâng cao: trỏ nhà cung cấp tích hợp này đến một endpoint tùy chỉnh. Để trống để sử dụng mặc định.",
+    "apiProtocolLabel": "Giao thức API",
+    "apiProtocolDefault": "Tương thích OpenAI (mặc định)",
+    "apiProtocolHint": "Một số nhà cung cấp phát hành cùng các mô hình qua nhiều giao thức khác nhau. Hãy giữ giá trị mặc định trừ khi bạn cần dùng giao thức thay thế.",
     "bulkAddFormatHintCloudflare": "Mỗi dòng một khóa. Định dạng: name|accountId|apiKey (Cloudflare account ID + API token).",
     "lmarenaWebCookieHint": "Mở arena.ai, đăng nhập, sau đó sao chép toàn bộ header Cookie từ một yêu cầu mạng. Bao gồm arena-auth-prod-v1.0 và arena-auth-prod-v1.1 (và các phần tiếp theo nếu có), ưu tiên kèm theo cf_clearance. Không chỉ dán cookie arena-auth-prod-v1 trống. Tùy chọn: providerSpecificData.recaptchaV3Token nếu create-evaluation vẫn trả về 403.",
     "kimiOfficialSupporterBadge": "Người Bạn Sáng Lập",
     "kimiOfficialSupporterTooltip": "Kimi (Moonshot AI) là người bạn mã nguồn mở sáng lập của OmniRoute",
     "kimiPartnerLinkNote": "Partner link — supports OmniRoute at no extra cost to you",
     "ccAliasSectionTitle": "Hiển thị trong Claude Code (claude/…)",
-    "ccAliasSectionHint": "Công bố các mô hình của nhà cung cấp này dưới dạng id phản chiếu claude/<provider>/<model> để tính năng khám phá mô hình qua gateway của Claude Code có thể liệt kê chúng. Mặc định tắt — bật lên sẽ nhân đôi số mục trong danh mục với mọi client.",
+    "ccAliasSectionHint": "Công bố các mô hình của nhà cung cấp này dưới dạng id phản chiếu claude/&lt;provider&gt;/&lt;model&gt; để tính năng khám phá mô hình qua gateway của Claude Code có thể liệt kê chúng. Mặc định tắt — bật lên sẽ nhân đôi số mục trong danh mục với mọi client.",
     "ccAliasProviderLevelLabel": "Mặc định của nhà cung cấp",
     "ccAliasModelOverridesLabel": "Ghi đè theo từng mô hình",
     "ccAliasModelOverrideAriaLabel": "Ghi đè cho {modelId}",
@@ -6770,7 +6773,7 @@
     "howPricingWorks": "Cách thức tính giá",
     "cacheWrite": "Ghi cache",
     "unsaved": "chưa lưu",
-    "resetDefaults": "Đặt lại mặc định",
+    "resetDefaults": "Đặt lại về mặc định",
     "saveProvider": "Lưu nhà cung cấp",
     "model": "Mô hình",
     "models": "mô hình",
@@ -7319,6 +7322,10 @@
       "less-code": {
         "label": "Ít mã hơn",
         "description": "Theo nguyên tắc YAGNI: thay đổi nhỏ nhất có thể chạy được, không thêm lớp trừu tượng ngoài yêu cầu."
+      },
+      "ponytail": {
+        "label": "Ponytail (lazy senior dev)",
+        "description": "Lazy senior-dev discipline: climb the YAGNI ladder, fix root cause, smallest working diff."
       },
       "terse-cjk": {
         "label": "CJK súc tích (文言)",
@@ -10540,7 +10547,9 @@
     "deleteGroupConfirm": "Xóa nhóm này? Các pool của nhóm phải được gán lại hoặc loại bỏ trước.",
     "deleteGroupHasPools": "Nhóm này vẫn còn các pool — hãy gán lại hoặc xóa chúng trước.",
     "ungroupedTitle": "Chưa phân nhóm",
-    "ungroupedHint": "Các pool này chưa được gán cho một nhóm mà hệ thống nhận diện. Hãy chỉnh sửa một pool để chuyển pool đó vào một nhóm hợp lệ."
+    "ungroupedHint": "Các pool này chưa được gán cho một nhóm mà hệ thống nhận diện. Hãy chỉnh sửa một pool để chuyển pool đó vào một nhóm hợp lệ.",
+    "removeFailed": "Could not remove this pool.",
+    "dismiss": "Dismiss"
   },
   "plugins": {
     "title": "Plugin",

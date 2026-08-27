@@ -1,1 +1,0 @@
-- **fix(providers):** path-shaped multimodal model ids (e.g. `cp/cline-pass/kimi-k3`) resolve native vision via leaf/registry metadata instead of triggering Vision Bridge ([#8032](https://github.com/diegosouzapw/OmniRoute/issues/8032)) — thanks @Prudhvivuda

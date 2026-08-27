@@ -13,6 +13,8 @@ const providersDb = await import("../../src/lib/db/providers.ts");
 const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
 const imageRoute = await import("../../src/app/api/v1/images/generations/route.ts");
+const providerImageRoute =
+  await import("../../src/app/api/v1/providers/[provider]/images/generations/route.ts");
 const imageEditRoute = await import("../../src/app/api/v1/images/edits/route.ts");
 const { MAX_BODY_BYTES_IMAGE_EDIT } = await import("../../src/shared/middleware/bodySizeGuard.ts");
 const v1ModelsCatalog = await import("../../src/app/api/v1/models/catalog.ts");
@@ -108,6 +110,20 @@ test.after(() => {
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+});
+
+test("image routes expose CORS preflight handlers", async () => {
+  const responses = await Promise.all([
+    imageRoute.OPTIONS(),
+    providerImageRoute.OPTIONS(),
+    imageEditRoute.OPTIONS(),
+  ]);
+
+  for (const response of responses) {
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("Access-Control-Allow-Methods") ?? "", /POST/);
+    assert.equal(response.headers.get("Access-Control-Allow-Headers"), "*");
+  }
 });
 
 test("v1 image models GET exposes image-only modalities for credential-backed image-only models", async () => {

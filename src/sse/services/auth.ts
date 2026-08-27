@@ -76,6 +76,7 @@ import {
 import { isNoAuthProviderBlockedBySettings } from "./noAuthProviderSettings";
 import { resolveAccountProxiesFromRegistry } from "./noAuthProxyResolution";
 import { getNoAuthHydrationProviderIds } from "./noAuthProviderSiblings";
+import { getResource404Bypass } from "./requestResourceHealth";
 import * as log from "../utils/logger";
 import { fisherYatesShuffle, getNextFromDeckSync } from "@/shared/utils/shuffleDeck";
 
@@ -491,6 +492,12 @@ function getEarliestFutureDate(candidates: Array<string | null>): string | null 
       .filter((entry) => entry.ms !== null)
       .sort((a, b) => (a.ms as number) - (b.ms as number))[0]?.raw || null
   );
+}
+
+function getCachedQuotaResetAt(connectionId: string): string | null {
+  const entry = getQuotaCache(connectionId);
+  if (!entry?.quotas) return null;
+  return getEarliestFutureDate(Object.values(entry.quotas).map((quota) => quota.resetAt));
 }
 
 function isRetryableModelLockoutReason(reason: unknown): boolean {
@@ -1891,15 +1898,7 @@ export async function getProviderCredentialsWithQuotaPreflight(
   }
 }
 
-/**
- * Mark account as unavailable — reads backoffLevel from DB, calculates cooldown with exponential backoff, saves new level
- * @param {string} connectionId
- * @param {number} status - HTTP status code
- * @param {string} errorText - Error message
- * @param {string|null} provider
- * @param {string|null} model - Model name for per-model lockout
- * @returns {{ shouldFallback: boolean, cooldownMs: number }}
- */
+/** Persist exponential-backoff state for an unavailable provider connection. */
 export async function markAccountUnavailable(
   connectionId: string,
   status: number,
@@ -1924,6 +1923,9 @@ export async function markAccountUnavailable(
 
   try {
     await currentMutex;
+
+    const resourceBypass = getResource404Bypass(status, errorText, connectionId, log);
+    if (resourceBypass) return resourceBypass;
 
     // Read current connection to get backoffLevel
     const connectionsRaw = await getProviderConnections({ provider });
@@ -2131,7 +2133,17 @@ export async function markAccountUnavailable(
       providerErrorType,
       provider
     );
-    const cooldownMs = terminalStatus ? 0 : rawCooldownMs;
+    const cachedQuotaResetAt =
+      providerErrorType === PROVIDER_ERROR_TYPES.QUOTA_EXHAUSTED ||
+      reason === RateLimitReason.QUOTA_EXHAUSTED
+        ? getCachedQuotaResetAt(connectionId)
+        : null;
+    const cachedQuotaResetMs = parseFutureDateMs(cachedQuotaResetAt);
+    const cooldownMs = terminalStatus
+      ? 0
+      : cachedQuotaResetMs
+        ? cachedQuotaResetMs - Date.now()
+        : rawCooldownMs;
 
     // ── #3027: per-model subscription/permission 403 → model-only lockout ──
     if (isPerModelQuotaProvider && status === 403 && provider && model && !terminalStatus) {

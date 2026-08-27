@@ -1,1 +1,0 @@
-- chore(token-refresh): decompose `open-sse/services/tokenRefresh.ts` (999 → 724 lines) by extracting the rotation-map, CAS guard and circuit-breaker refresh logic into `tokenRefresh/*` leaves — behavior-preserving move; `tokenRefresh.ts` still re-exports the moved symbols so the public surface is unchanged

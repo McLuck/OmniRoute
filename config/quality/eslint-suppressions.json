@@ -295,6 +295,11 @@
       "count": 1
     }
   },
+  "src/app/(dashboard)/dashboard/settings/components/ProviderAccountRoutingCard.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
   "src/app/(dashboard)/dashboard/settings/components/SessionInfoCard.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1

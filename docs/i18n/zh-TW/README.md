@@ -652,18 +652,22 @@ devbox run npm run dev
 **🦭 Podman**
 
 ```bash
-# 1. 建構映像
-podman build --target runner-base -t omniroute:base .
+# 1. 準備繫結掛載的資料目錄
+mkdir -p data
 
-# 2. 修正無 root Podman 的資料目錄權限
-mkdir -p data && podman unshare chown 1000:1000 ./data
+# 2. 僅限 Linux + 本機 rootless Podman（切勿用於遠端 Podman Machine 用戶端）
+podman unshare chown 1000:1000 ./data
 
-# 3. 在 .env 中設定執行時期，然後執行（參見 contrib/podman/ 中的 Quadlet）
+# 3. 設定執行環境提示、建構本機 Compose 映像並啟動
 echo "CONTAINER_HOST=podman" >> .env
-podman compose --profile base up -d
+podman compose --profile base up -d --build
 ```
 
-📖 [Podman Guide](../../contrib/podman/README.md) — Quadlet 設定、podman-compose、Quadlet。
+在 macOS 或 Windows 上，Podman 使用遠端 Podman Machine：請略過
+`podman unshare`，並依照[各拓撲的資料目錄指引](../../../contrib/podman/README.md#data-directory-permissions-by-topology)操作。
+
+📖 [Podman Guide](../../../contrib/podman/README.md) — Compose 建構、Podman Machine
+以及僅限 Linux/systemd 的 Quadlet 設定。
 
 <br/>
 

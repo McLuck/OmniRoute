@@ -2,7 +2,7 @@
 
 /**
  * ProviderCcAliasSection — operator control for the Claude Code discovery-alias
- * gate (`claude/<provider>/<model>` mirror ids on /v1/models — see
+ * gate (`claude/&lt;provider&gt;/&lt;model&gt;` mirror ids on /v1/models — see
  * src/lib/db/ccDiscoveryAliases.ts for the gate itself).
  *
  * Renders a card on the provider detail page with:
@@ -250,7 +250,7 @@ export default function ProviderCcAliasSection({ providerId }: ProviderCcAliasSe
         {providerText(
           t,
           "ccAliasSectionHint",
-          "Advertise this provider's models under claude/<provider>/<model> mirror ids so Claude Code's gateway model discovery can list them. Off by default — enabling this doubles catalog entries for all clients."
+          "Advertise this provider's models under claude/&lt;provider&gt;/&lt;model&gt; mirror ids so Claude Code's gateway model discovery can list them. Off by default — enabling this doubles catalog entries for all clients."
         )}
       </p>
 

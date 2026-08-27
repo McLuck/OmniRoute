@@ -135,6 +135,7 @@ export type {
 export {
   // Settings
   getSettings,
+  getSettingsRevision,
   updateSettings,
   isCloudEnabled,
 

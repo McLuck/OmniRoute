@@ -35,7 +35,7 @@ jobs:
       workflow: ${{ steps.classify.outputs.workflow }}
       testsOnly: ${{ steps.classify.outputs.testsOnly }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -449,15 +449,26 @@ jobs:
     # UI keys move with dashboard code OR message catalogs.
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.i18n == 'true' || needs.changes.outputs.code == 'true')) }}
     steps:
+      # fetch-depth: 0 — the value-drift gate diffs en.json against the merge base to
+      # find rewritten English strings. On a shallow clone the base ref is missing and
+      # the gate self-skips (base-unresolved), so it would never actually run.
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.CI_NODE_VERSION }}
           cache: npm
       - uses: ./.github/actions/npm-ci-retry
       - run: node scripts/i18n/check-ui-keys-coverage.mjs --threshold=65
+      # #8463: a rewritten English value used to leave its 39 translations behind
+      # silently (googleOAuthWarning shipped wrong copy in 39 locales for months).
+      # Key parity above cannot see it — a stale translation counts as covered.
+      - name: i18n UI value drift (stale translations)
+        env:
+          BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
+        run: node scripts/i18n/check-ui-value-drift.mjs
 
   # #8038: cheap single-locale glossary/protected-terms consistency gate —
   # complements i18n-ui-coverage (key parity) and the ICU `i18n` job below
@@ -1115,7 +1126,8 @@ jobs:
           if FILES=$(node scripts/quality/balance-e2e-shards.mjs "$SHARD" 9); then
             if [ -z "$FILES" ]; then echo "[e2e-balance] shard $SHARD has no files"; exit 0; fi
             echo "[e2e-balance] shard $SHARD runs:"; echo "$FILES"
-            # shellcheck disable=SC2086 — FILES is our own newline-separated path list
+            # FILES is our own newline-separated path list, so word-splitting is intended
+            # shellcheck disable=SC2086,SC2046
             npx playwright test $(echo "$FILES" | tr '\n' ' ') --reporter=line,junit
           else
             echo "[e2e-balance] balancer unavailable — plain --shard fallback"

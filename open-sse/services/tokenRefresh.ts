@@ -45,6 +45,8 @@ import { refreshKimiCodingToken } from "./tokenRefresh/providers/kimiCoding.ts";
 import { refreshGitLabDuoToken } from "./tokenRefresh/providers/gitlabDuo.ts";
 import { refreshClaudeOAuthToken } from "./tokenRefresh/providers/claudeOAuth.ts";
 import { refreshGoogleToken } from "./tokenRefresh/providers/google.ts";
+import { ensureAntigravityProjectAssigned } from "./antigravityProjectBootstrap.ts";
+import { persistDiscoveredAntigravityProjectId } from "./antigravityProjectPersist.ts";
 import { refreshCodexToken } from "./tokenRefresh/providers/codex.ts";
 import { refreshKiroToken } from "./tokenRefresh/providers/kiro.ts";
 import { refreshQoderToken } from "./tokenRefresh/providers/qoder.ts";
@@ -275,14 +277,53 @@ async function _getAccessTokenInternal(provider, credentials, log, proxyConfig: 
 
     case "gemini":
     case "antigravity":
-    case "agy":
-      return await refreshGoogleToken(
+    case "agy": {
+      const result = await refreshGoogleToken(
         credentials.refreshToken,
         PROVIDERS[provider].clientId,
         PROVIDERS[provider].clientSecret,
         log,
         proxyConfig
       );
+
+      // Google One AI accounts get no projectId at OAuth exchange time.
+      // Recover it via loadCodeAssist so downstream routing works.
+      if (
+        result?.accessToken &&
+        (provider === "antigravity" || provider === "agy") &&
+        !(credentials.projectId || credentials.providerSpecificData?.projectId)
+      ) {
+        try {
+          const discovered = await ensureAntigravityProjectAssigned(
+            result.accessToken,
+            fetch
+          );
+          if (discovered) {
+            result.projectId = discovered;
+            result.providerSpecificData = {
+              ...(credentials.providerSpecificData || {}),
+              ...(result.providerSpecificData || {}),
+              projectId: discovered,
+            };
+            if (credentials.connectionId) {
+              await persistDiscoveredAntigravityProjectId(
+                credentials.connectionId,
+                discovered,
+                credentials.providerSpecificData
+              );
+            }
+            log?.info?.("TOKEN", "Antigravity projectId discovered during token refresh", {
+              projectId: discovered,
+            });
+          }
+        } catch (discoveryError) {
+          const msg = discoveryError instanceof Error ? discoveryError.message : String(discoveryError);
+          log?.warn?.("TOKEN", `Antigravity projectId discovery failed: ${msg}`);
+        }
+      }
+
+      return result;
+    }
 
     case "claude":
       return await refreshClaudeOAuthToken(credentials.refreshToken, log, proxyConfig);

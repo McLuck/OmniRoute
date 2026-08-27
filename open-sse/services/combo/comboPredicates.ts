@@ -11,6 +11,7 @@ import { parseModel } from "../model.ts";
 import { isSelfInflictedUpstreamTimeout } from "../../handlers/chatCore/cooldownClassification.ts";
 import { isLocalStreamLifecycleError } from "@/shared/utils/circuitBreaker";
 import { CONTEXT_OVERFLOW_PATTERNS, MODEL_ACCESS_DENIED_PATTERNS } from "../accountFallback.ts";
+import { isResourceNotFoundResponse } from "../errorClassifier.ts";
 import type { ResolvedComboTarget } from "./types.ts";
 
 // Status codes that should mark round-robin target semaphores as cooling down.
@@ -195,6 +196,18 @@ export function isRequestScopedUpstreamFailure(error?: {
   const code = typeof error?.code === "string" ? error.code.toLowerCase() : "";
   const type = typeof error?.type === "string" ? error.type.toLowerCase() : "";
   return REQUEST_SCOPED_UPSTREAM_ERROR_CODES.has(code) || type === "context_length_exceeded";
+}
+
+/** Request-scoped classification that also has access to the HTTP body. */
+export function isComboRequestScopedFailure(
+  status: number,
+  errorText: string,
+  error?: { code?: string | null; type?: string | null }
+): boolean {
+  return (
+    isRequestScopedUpstreamFailure(error) ||
+    (status === 404 && isResourceNotFoundResponse(errorText))
+  );
 }
 
 const INPUT_BOUND_ERROR_CODES = new Set(["context_length_exceeded", "context_window_exceeded"]);

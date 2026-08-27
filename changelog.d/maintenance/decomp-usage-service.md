@@ -1,1 +1,0 @@
-- chore(usage): decompose `open-sse/services/usage.ts` (999 → 253 lines) by extracting the crof, nanogpt, qoder, opencode, deepseek, bailian, vertex, xiaomi-mimo, xai and github usage fetchers into `usage/*` leaves — behavior-preserving move, the file is now a thin provider→fetcher dispatcher and the public import surface is unchanged

@@ -937,7 +937,7 @@
   "disabled": "معطل",
   "featureFlagOmnirouteEmergencyFallbackDescription": "توجيه الطلبات التي استنفدت الميزانية إلى موفر/نموذج الاحتياط المجاني للطوارئ.",
   "featureFlagArenaEloSyncEnabledDescription": "تمكين المزامنة الدورية لتصنيف ELO للوحة صدارة Arena AI لتصنيفات ذكاء النماذج.",
-  "featureFlagExposeCcDiscoveryAliasesDescription": "__MISSING__:Advertise claude/<provider>/<model> mirror ids on /v1/models so Claude Code gateway model discovery lists non-Claude models. Warning: doubles catalog entries for all clients when enabled globally.",
+  "featureFlagExposeCcDiscoveryAliasesDescription": "__MISSING__:Advertise claude/&lt;provider&gt;/&lt;model&gt; mirror ids on /v1/models so Claude Code gateway model discovery lists non-Claude models. Warning: doubles catalog entries for all clients when enabled globally.",
   "sidebar": {
     "home": "الصفحة الرئيسية",
     "dashboard": "لوحة القيادة",
@@ -2947,7 +2947,7 @@
     "wireApiChatCompletions": "مكتملات الدردشة (/chat/مكتملات)",
     "wireApiResponses": "واجهة برمجة تطبيقات الاستجابات (/ الاستجابات)",
     "ccDiscoveryInfoButton": "__MISSING__:How to enable discovery in Claude Code",
-    "ccDiscoveryInfoTooltip": "__MISSING__:Advertise non-Claude models under claude/<provider>/<model> mirror ids so Claude Code's gateway model discovery can list them. Doubles catalog entries for all clients when enabled globally.",
+    "ccDiscoveryInfoTooltip": "__MISSING__:Advertise non-Claude models under claude/&lt;provider&gt;/&lt;model&gt; mirror ids so Claude Code's gateway model discovery can list them. Doubles catalog entries for all clients when enabled globally.",
     "ccDiscoveryInfoLink": "__MISSING__:Open Feature Flags",
     "ccOnboardingTitle": "__MISSING__:settings.json for gateway model discovery",
     "ccOnboardingCopy": "__MISSING__:Copy",
@@ -3704,7 +3704,7 @@
     "modelsCount": "النماذج: {count, plural, one {نموذج واحد} other {# نماذج}}",
     "sectionTitle": "سطح التكامل",
     "sectionDescription": "واجهات برمجة التطبيقات المتوافقة مع OpenAI ونقاط نهاية البروتوكول التشغيلية",
-    "tabApis": "واجهات برمجة تطبيقات متوافقة مع OpenAI",
+    "tabApis": "__MISSING__:APIs",
     "tabProtocols": "البروتوكولات",
     "tabsAria": "أقسام نقطة النهاية",
     "protocolsTitle": "البروتوكولات",
@@ -5978,7 +5978,7 @@
     "kimiOfficialSupporterTooltip": "Kimi (Moonshot AI) هو الصديق المؤسس للمصادر المفتوحة لـ OmniRoute",
     "kimiPartnerLinkNote": "رابط شريك — يدعم OmniRoute دون أي تكلفة إضافية عليك",
     "ccAliasSectionTitle": "__MISSING__:Expose in Claude Code (claude/…)",
-    "ccAliasSectionHint": "__MISSING__:Advertise this provider's models under claude/<provider>/<model> mirror ids so Claude Code's gateway model discovery can list them. Off by default — enabling this doubles catalog entries for all clients.",
+    "ccAliasSectionHint": "__MISSING__:Advertise this provider's models under claude/&lt;provider&gt;/&lt;model&gt; mirror ids so Claude Code's gateway model discovery can list them. Off by default — enabling this doubles catalog entries for all clients.",
     "ccAliasProviderLevelLabel": "__MISSING__:Provider default",
     "ccAliasModelOverridesLabel": "__MISSING__:Per-model overrides",
     "ccAliasModelOverrideAriaLabel": "__MISSING__:Override for {modelId}",
@@ -6748,7 +6748,7 @@
     "howPricingWorks": "كيف يعمل التسعير",
     "cacheWrite": "كتابة ذاكرة التخزين المؤقت",
     "unsaved": "غير محفوظ",
-    "resetDefaults": "إعادة تعيين الإعدادات الافتراضية",
+    "resetDefaults": "__MISSING__:Reset defaults",
     "saveProvider": "حفظ المزود",
     "model": "نموذج",
     "models": "نماذج",
@@ -7297,6 +7297,10 @@
       "less-code": {
         "label": "كود أقل",
         "description": "سلم YAGNI: أصغر تغيير فعال، بدون تجريدات غير مطلوبة."
+      },
+      "ponytail": {
+        "label": "Ponytail (lazy senior dev)",
+        "description": "Lazy senior-dev discipline: climb the YAGNI ladder, fix root cause, smallest working diff."
       },
       "terse-cjk": {
         "label": "CJK مقتضب (文言)",
@@ -10518,7 +10522,9 @@
     "deleteGroupConfirm": "هل تريد حذف هذه المجموعة؟ يجب إعادة تعيين مجمعاتها أو إزالتها أولاً.",
     "deleteGroupHasPools": "لا تزال هذه المجموعة تحتوي على مجمعات — أعد تعيينها أو احذفها أولاً.",
     "ungroupedTitle": "غير مجمع",
-    "ungroupedHint": "هذه المجمعات غير مخصصة لمجموعة معروفة. قم بتحرير مجمع لنقله إلى مجموعة حقيقية."
+    "ungroupedHint": "هذه المجمعات غير مخصصة لمجموعة معروفة. قم بتحرير مجمع لنقله إلى مجموعة حقيقية.",
+    "removeFailed": "Could not remove this pool.",
+    "dismiss": "Dismiss"
   },
   "plugins": {
     "title": "الإضافات",

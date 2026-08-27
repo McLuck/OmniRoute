@@ -57,7 +57,7 @@ import { parseDayGranularityResetMs, shouldPreserveQuotaSignals } from "./quotaR
 import { evictLockoutOverflow } from "./accountFallback/lockoutEviction.ts";
 export { MODEL_LOCKOUT_EVICTION_CAP } from "./accountFallback/lockoutEviction.ts";
 import { capScaledCooldownMs } from "./accountFallback/cooldownCap.ts";
-
+import { resolveApiKeyForbiddenFallback } from "./accountFallback/nonRetryableUpstream.ts";
 export type ProviderProfile = {
   baseCooldownMs: number;
   useUpstreamRetryHints: boolean;
@@ -1578,7 +1578,8 @@ export function checkFallbackError(
       const subResult = buildSubscriptionQuotaFallback(
         errorStr,
         getUpstreamRetryHintMs,
-        parseRetryFromErrorText
+        parseRetryFromErrorText,
+        provider
       );
       if (subResult) return subResult;
     }
@@ -1624,7 +1625,7 @@ export function checkFallbackError(
       !errorStr.toLowerCase().includes("hour quota") &&
       !errorStr.toLowerCase().includes("quota has been exceeded")
     ) {
-      return buildRetryableFallback(RateLimitReason.AUTH_ERROR);
+      return resolveApiKeyForbiddenFallback(errorStr, buildRetryableFallback, RateLimitReason.AUTH_ERROR);
     }
   }
 

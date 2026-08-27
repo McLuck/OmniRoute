@@ -114,6 +114,20 @@ describe("Notion thread session continuity", () => {
     assert.equal(notionThreadSessionLookup("other-space", turn2), null);
   });
 
+  it("reuses the same Notion thread for new stateless prompts in the same caller scope", () => {
+    __resetNotionThreadSessionsForTests();
+    const spaceId = "caller:cookie-hash|space-stateless";
+    const firstPrompt = [{ role: "user", content: "first standalone prompt" }];
+    const secondPrompt = [{ role: "user", content: "different standalone prompt" }];
+    const threadId = "99999999-8888-7777-6666-555555555555";
+
+    assert.equal(notionThreadSessionLookup(spaceId, firstPrompt), null);
+    notionThreadSessionStore(spaceId, firstPrompt, "assistant reply one", threadId);
+
+    assert.equal(notionThreadSessionLookup(spaceId, secondPrompt), threadId);
+    assert.equal(notionThreadSessionLookup("caller:other|space-stateless", secondPrompt), null);
+  });
+
   it("reuses thread when turn-1 user was UREW-rewritten but client replays original text", () => {
     __resetNotionThreadSessionsForTests();
     const spaceId = "space-urew";
@@ -389,6 +403,68 @@ describe("Notion thread session continuity", () => {
       assert.equal(capturedCreateThread, false);
     } finally {
       restoreTls();
+      __resetNotionThreadSessionsForTests();
+    }
+  });
+
+  it("execute: folds response_format into Notion transcript instructions for JSON callers", async () => {
+    __resetNotionThreadSessionsForTests();
+    const executor = new mod.NotionWebExecutor();
+    let capturedContext: Record<string, unknown> | undefined;
+    const restore = installNotionTlsMock(async (_url, opts) => {
+      const body = JSON.parse(String(opts.body)) as {
+        transcript?: Array<{ type?: string; value?: Record<string, unknown> }>;
+      };
+      capturedContext = body.transcript?.find((step) => step.type === "context")?.value;
+      const ndjson = [
+        JSON.stringify({ type: "patch-start", data: { s: [] } }),
+        JSON.stringify({
+          type: "record-map",
+          recordMap: {
+            thread_message: {
+              m1: {
+                value: {
+                  value: {
+                    step: {
+                      type: "agent-inference",
+                      value: [{ type: "text", content: "{\"reply\":\"ok\"}" }],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      ].join("\n");
+      return { status: 200, text: ndjson };
+    });
+    try {
+      const result = await executor.execute({
+        model: "fable-5",
+        body: {
+          messages: [{ role: "user", content: "Return a reply object" }],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "xpuffer_reply",
+              schema: {
+                type: "object",
+                properties: { reply: { type: "string" } },
+                required: ["reply"],
+              },
+            },
+          },
+        },
+        stream: false,
+        credentials: { apiKey: COOKIE_WITH_SPACE },
+        signal: null,
+      } as never);
+
+      assert.equal(result.response.status, 200);
+      assert.match(String(capturedContext?.instructions || ""), /Return only valid JSON/);
+      assert.match(String(capturedContext?.instructions || ""), /xpuffer_reply/);
+    } finally {
+      restore();
       __resetNotionThreadSessionsForTests();
     }
   });

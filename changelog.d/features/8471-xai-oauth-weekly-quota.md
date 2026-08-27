@@ -1,1 +1,0 @@
-- **feat(providers):** weekly quota for xAI OAuth (Grok) (`xai-oauth` / `xao`) via shared cli-chat-proxy billing (`creditUsagePercent`), with fail-open self-tracked fallback ([#8471](https://github.com/diegosouzapw/OmniRoute/pull/8471)) — thanks @allanvb

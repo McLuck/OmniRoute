@@ -181,10 +181,10 @@ test("provider models route merges live Codex models with the local catalog then
   // merge conservatively — the smaller of live vs. pinned wins, never the
   // larger, so a stale/inflated live number can never make OmniRoute promise
   // more context than the account can actually serve (#7012). Here the pinned
-  // GPT-5.6 Codex contract (372000/128000, see GPT_5_6_CODEX_CAPABILITIES) is
+  // GPT-5.6 Codex contract (272000/128000, see GPT_5_6_CODEX_CAPABILITIES) is
   // smaller than the live payload's 999999/999999, so the pinned value wins.
   assert.equal(liveModel?.name, "GPT 5.6 Sol Live");
-  assert.equal(liveModel?.inputTokenLimit, 372000);
+  assert.equal(liveModel?.inputTokenLimit, 272000);
   assert.equal(liveModel?.outputTokenLimit, 128000);
   assert.equal(liveModel?.apiFormat, "responses");
   assert.deepEqual(liveModel?.supportedEndpoints, ["responses"]);
@@ -218,7 +218,7 @@ test("provider models route: live token limit wins when it is SMALLER than the p
       return Response.json({ models: [] });
     }
     // Live reports a SMALLER budget than the pinned GPT-5.6 Codex contract
-    // (372000/128000, GPT_5_6_CODEX_CAPABILITIES) — e.g. a temporary
+    // (272000/128000, GPT_5_6_CODEX_CAPABILITIES) — e.g. a temporary
     // account-level cap. The conservative merge must take the smaller live
     // value here, not the larger pinned one (#7012).
     return Response.json({

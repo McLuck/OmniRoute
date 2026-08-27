@@ -190,6 +190,48 @@ test("buildAdobeImagePayload produces nano and gpt-image shapes", () => {
   assert.equal((gpt.modelSpecificPayload as Record<string, unknown>).size, "auto");
   assert.equal(gpt.size, undefined);
   assert.equal(gpt.outputResolution, undefined);
+
+  // Missing / auto quality → maximal detail (5). Explicit low/medium still honored.
+  const gptDefault = buildAdobeImagePayload({
+    prompt: "a dog",
+    aspectRatio: "1:1",
+    outputResolution: "1K",
+    modelSpec: ADOBE_FIREFLY_IMAGE_MODELS["gpt-image-2"],
+  });
+  assert.equal((gptDefault.generationSettings as Record<string, unknown>).detailLevel, 5);
+  const gptAuto = buildAdobeImagePayload({
+    prompt: "a dog",
+    aspectRatio: "1:1",
+    outputResolution: "1K",
+    modelSpec: ADOBE_FIREFLY_IMAGE_MODELS["gpt-image"],
+    quality: "auto",
+  });
+  assert.equal((gptAuto.generationSettings as Record<string, unknown>).detailLevel, 5);
+  const gptLow = buildAdobeImagePayload({
+    prompt: "a dog",
+    aspectRatio: "1:1",
+    outputResolution: "1K",
+    modelSpec: ADOBE_FIREFLY_IMAGE_MODELS["gpt-image"],
+    quality: "low",
+  });
+  assert.equal((gptLow.generationSettings as Record<string, unknown>).detailLevel, 1);
+  const gptMedium = buildAdobeImagePayload({
+    prompt: "a dog",
+    aspectRatio: "1:1",
+    outputResolution: "1K",
+    modelSpec: ADOBE_FIREFLY_IMAGE_MODELS["gpt-image"],
+    quality: "medium",
+  });
+  assert.equal((gptMedium.generationSettings as Record<string, unknown>).detailLevel, 3);
+  // Firefly UI resolution tiers map onto the same detailLevel scale.
+  const gpt4k = buildAdobeImagePayload({
+    prompt: "a dog",
+    aspectRatio: "1:1",
+    outputResolution: "1K",
+    modelSpec: ADOBE_FIREFLY_IMAGE_MODELS["gpt-image"],
+    quality: "4k",
+  });
+  assert.equal((gpt4k.generationSettings as Record<string, unknown>).detailLevel, 5);
 });
 
 test("buildAdobeImagePayload attaches referenceBlobs like live adobe_atach_images capture", () => {

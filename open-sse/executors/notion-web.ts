@@ -96,6 +96,9 @@ const NOTION_CLIENT_VERSION = "23.13.20260720.1949";
 interface NotionRequestBody {
   messages?: NotionMessage[];
   model?: string;
+  /** OpenAI-compatible structured output request. Notion Web has no native param,
+   * so the executor folds it into transcript instructions. */
+  response_format?: unknown;
   /** Optional client-supplied Notion thread continuity (also via X-Notion-Thread-Id). */
   notion_thread_id?: string;
   thread_id?: string;
@@ -126,6 +129,41 @@ function readProviderSpecificString(
     if (value) return value;
   }
   return "";
+}
+
+function buildStructuredOutputInstruction(responseFormat: unknown): string {
+  if (!responseFormat || typeof responseFormat !== "object" || Array.isArray(responseFormat)) {
+    return "";
+  }
+  const format = responseFormat as Record<string, unknown>;
+  const type = typeof format.type === "string" ? format.type : "";
+  if (type !== "json_object" && type !== "json_schema") return "";
+
+  const lines = [
+    "Structured output requirement:",
+    "- Return only valid JSON.",
+    "- Do not wrap the JSON in markdown fences.",
+    "- Do not add prose before or after the JSON.",
+  ];
+
+  if (type === "json_schema" && format.json_schema && typeof format.json_schema === "object") {
+    try {
+      lines.push(`- Match this JSON schema: ${JSON.stringify(format.json_schema)}`);
+    } catch {
+      lines.push("- Match the requested JSON schema.");
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function appendStructuredOutputInstruction(
+  messages: NotionMessage[],
+  responseFormat: unknown
+): NotionMessage[] {
+  const instruction = buildStructuredOutputInstruction(responseFormat);
+  if (!instruction) return messages;
+  return [{ role: "system", content: instruction }, ...messages];
 }
 
 /** Normalize a pasted credential to a `name=value` cookie pair. Accepts a bare
@@ -561,7 +599,10 @@ export class NotionWebExecutor extends BaseExecutor {
     // Optional custom agent (workflowId). Empty → default Notion AI (not agentic-specific).
     const agent = resolveNotionAgentOptions(credentials, cookie);
 
-    const messages = requestBody.messages || [];
+    const messages = appendStructuredOutputInstruction(
+      requestBody.messages || [],
+      requestBody.response_format
+    );
     if (!messages.some((m) => m.role === "user")) {
       return makeErrorResult(400, "No user message found", body, NOTION_URL);
     }

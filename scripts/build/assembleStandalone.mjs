@@ -178,6 +178,21 @@ const EXTRA_MODULE_ENTRIES = [
     dest: ["build", "bootstrap-env.mjs"],
   },
   {
+    label: "normalizeBasePath helper",
+    src: ["scripts", "build", "normalizeBasePath.mjs"],
+    dest: ["build", "normalizeBasePath.mjs"],
+  },
+  {
+    label: "docker basePath entrypoint",
+    src: ["scripts", "docker", "ensure-docker-base-path.mjs"],
+    dest: ["docker", "ensure-docker-base-path.mjs"],
+  },
+  {
+    label: "docker basePath patcher",
+    src: ["scripts", "docker", "patch-standalone-base-path.mjs"],
+    dest: ["docker", "patch-standalone-base-path.mjs"],
+  },
+  {
     label: "healthcheck script",
     src: ["scripts", "dev", "healthcheck.mjs"],
     dest: ["healthcheck.mjs"],

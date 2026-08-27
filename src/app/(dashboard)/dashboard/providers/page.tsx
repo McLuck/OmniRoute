@@ -30,6 +30,7 @@ import {
   shouldFilterProviderEntriesForDisplayMode,
   shouldShowFirstProviderHint,
   shouldShowProviderSection,
+  syncSearchToUrl,
   upsertProviderNodeById,
   loadProviderPageData,
 } from "./providerPageUtils";
@@ -238,6 +239,10 @@ export default function ProvidersPage() {
       setSearchQuery(searchFromUrl);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    syncSearchToUrl(searchQuery);
+  }, [searchQuery]);
 
   useEffect(() => {
     const fetchData = async () => {

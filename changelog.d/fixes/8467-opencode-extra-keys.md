@@ -1,1 +1,0 @@
-- **fix(providers):** OpencodeExecutor honors Extra API Keys rotation via `resolveEffectiveKey` (empty primary + extras no longer omit Authorization) ([#8467](https://github.com/diegosouzapw/OmniRoute/issues/8467)) — thanks @Prudhvivuda
